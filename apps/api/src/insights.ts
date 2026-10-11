@@ -27,12 +27,12 @@ insights.get('/sites/:id/unanswered', async (c) => {
   const site = await ownedSite(c);
   if (!site) return notFound(c);
   const { results } = await c.env.DB.prepare(
-    `SELECT content, conversation_id AS conversationId, created_at AS createdAt
-     FROM messages WHERE site_id = ?1 AND role = 'user' AND answered = 0
+    `SELECT content, conversation_id AS conversationId, created_at AS createdAt, answered
+     FROM messages WHERE site_id = ?1 AND role = 'user'
      ORDER BY created_at DESC, rowid DESC LIMIT ${UNANSWERED_SCAN}`,
   )
     .bind(site.id)
-    .all<{ content: string; conversationId: string; createdAt: number }>();
+    .all<{ content: string; conversationId: string; createdAt: number; answered: number }>();
 
   // A question the owner has since answered with a Q&A pair is done: it must not keep showing.
   const { results: answeredRows } = await c.env.DB.prepare(
@@ -45,8 +45,16 @@ insights.get('/sites/:id/unanswered', async (c) => {
   // Rows arrive newest first, so the first row of a group supplies its wording, time and
   // conversation, and the Map's insertion order is already "most recent first".
   const groups = new Map<string, UnansweredQuestion>();
+  // Wordings whose most recent ask did get an answer: the content has caught up since
+  // (new content takes a little while to become searchable), so earlier misses are stale.
+  const resolved = new Set<string>();
   for (const row of results) {
     const key = wordingKey(row.content);
+    if (row.answered === 1) {
+      if (!groups.has(key)) resolved.add(key);
+      continue;
+    }
+    if (resolved.has(key)) continue;
     // Q&A labels are capped at 300 characters, and so is what "Answer it" saves.
     if (answered.has(key) || answered.has(key.slice(0, 300).trim())) continue;
     const group = groups.get(key);

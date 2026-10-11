@@ -186,6 +186,25 @@ describe('GET /api/sites/:id/unanswered', () => {
     expect((await unanswered(t, site.id, owner.cookie)).map((q) => q.question)).toEqual(['How much?']);
   });
 
+  it('drops a miss when the same question was answered on a later ask', async () => {
+    const t = makeEnv();
+    const owner = await signUp(t);
+    const site = await addSite(owner.user.id);
+    const conversation = await addConversation(site.id);
+    await addMessages(site.id, [
+      // Asked before the new content was searchable, then again once it was.
+      { conversationId: conversation, content: 'When is support open?', at: 1000 },
+      { conversationId: conversation, content: 'when is support OPEN?', at: 2000, answered: 1 },
+      // Answered once, then missed later: still a live problem.
+      { conversationId: conversation, content: 'Do you ship abroad?', at: 3000, answered: 1 },
+      { conversationId: conversation, content: 'Do you ship abroad?', at: 4000 },
+    ]);
+
+    expect(await unanswered(t, site.id, owner.cookie)).toEqual([
+      { question: 'Do you ship abroad?', count: 1, lastAskedAt: 4000, conversationId: conversation },
+    ]);
+  });
+
   it('returns an empty list for a site with no unanswered questions', async () => {
     const t = makeEnv();
     const owner = await signUp(t);

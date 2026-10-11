@@ -8,3 +8,4 @@ wrangler.dev.jsonc
 apps/dashboard/public/widget.js
 .claude/
 .e2e-test-account
+.e2e-test-account-*
