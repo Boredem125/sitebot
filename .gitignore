@@ -2,6 +2,7 @@ node_modules/
 dist/
 .wrangler/
 .dev.vars
+wrangler.dev.jsonc
 *.log
 .DS_Store
 apps/dashboard/public/widget.js

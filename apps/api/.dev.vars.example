@@ -1,2 +1,10 @@
 # Copy to .dev.vars (git-ignored) and fill in. Used by `wrangler dev` only.
 GROQ_API_KEY=
+
+# Optional. More Groq keys, comma-separated, tried when the first is rate limited.
+# Keys from the same Groq organization share one limit and add nothing.
+# GROQ_API_KEYS=
+
+# Optional. Password reset mail through Resend. Without both, no mail is sent.
+# RESEND_API_KEY=
+# MAIL_FROM=Sitebot <no-reply@example.com>

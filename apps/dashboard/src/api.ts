@@ -7,6 +7,8 @@ import type {
   CreateSiteRequest,
   Message,
   QaRequest,
+  ResetConfirm,
+  ResetRequest,
   Site,
   SiteUsage,
   Source,
@@ -76,7 +78,7 @@ async function toError(res: Response): Promise<ApiRequestError> {
 }
 
 export interface RequestOptions {
-  method?: 'GET' | 'POST' | 'PATCH';
+  method?: 'GET' | 'POST' | 'PATCH' | 'DELETE';
   json?: unknown;
   form?: FormData;
   /** Sign-in calls answer 401 for bad credentials, which is not an expired session. */
@@ -138,6 +140,16 @@ export async function me(): Promise<User> {
   return res.user;
 }
 
+/** Always resolves for a well-formed address: the server never says whether the account exists. */
+export async function requestReset(body: ResetRequest): Promise<void> {
+  await request<{ ok: true }>('/api/auth/reset/request', { method: 'POST', json: body, expectsSession: false });
+}
+
+/** Sets the new password. The caller is not signed in afterwards and logs in as usual. */
+export async function confirmReset(body: ResetConfirm): Promise<void> {
+  await request<{ ok: true }>('/api/auth/reset/confirm', { method: 'POST', json: body, expectsSession: false });
+}
+
 // ---------- sites ----------
 
 export async function listSites(signal?: AbortSignal): Promise<Site[]> {
@@ -163,6 +175,11 @@ export async function updateSite(id: string, body: UpdateSiteRequest): Promise<S
 export async function detectBrand(id: string): Promise<Site> {
   const res = await request<{ site: Site }>(`/api/sites/${seg(id)}/brand`, { method: 'POST' });
   return res.site;
+}
+
+/** Removes the site and everything indexed or recorded for it. Cannot be undone. */
+export async function deleteSite(id: string): Promise<void> {
+  await request<{ ok: true }>(`/api/sites/${seg(id)}`, { method: 'DELETE' });
 }
 
 // ---------- sources ----------
@@ -194,6 +211,19 @@ export async function addQa(siteId: string, body: QaRequest): Promise<Source> {
   const res = await request<{ source: Source }>(`/api/sites/${seg(siteId)}/sources/qa`, {
     method: 'POST',
     json: body,
+  });
+  return res.source;
+}
+
+/** Removes the source and its indexed content. */
+export async function deleteSource(siteId: string, sourceId: string): Promise<void> {
+  await request<{ ok: true }>(`/api/sites/${seg(siteId)}/sources/${seg(sourceId)}`, { method: 'DELETE' });
+}
+
+/** Crawl sources only. Answers 409 while the source is still queued or being indexed. */
+export async function recrawlSource(siteId: string, sourceId: string): Promise<Source> {
+  const res = await request<{ source: Source }>(`/api/sites/${seg(siteId)}/sources/${seg(sourceId)}/recrawl`, {
+    method: 'POST',
   });
   return res.source;
 }

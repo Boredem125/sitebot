@@ -14,6 +14,21 @@ const KEY_BYTES = 32;
 export const SESSION_COOKIE = 'sb_session';
 const SESSION_TTL_SEC = 30 * 24 * 60 * 60;
 
+const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+/** The trimmed, lower-cased address, or null when the value is not a plausible email. */
+export function parseEmail(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const email = value.trim().toLowerCase();
+  return email.length <= 254 && EMAIL.test(email) ? email : null;
+}
+
+// One rule for signup and password reset, so a reset can never set a password signup would refuse.
+export const PASSWORD_RULE = 'Password must be 8 to 200 characters';
+
+export const isValidPassword = (value: unknown): value is string =>
+  typeof value === 'string' && value.length >= 8 && value.length <= 200;
+
 const toBase64 = (bytes: Uint8Array): string => btoa(String.fromCharCode(...bytes));
 
 const fromBase64 = (text: string): Uint8Array => Uint8Array.from(atob(text), (ch) => ch.charCodeAt(0));

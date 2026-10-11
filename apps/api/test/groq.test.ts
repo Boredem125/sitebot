@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { buildGroqBody, GroqError, parseSse, streamGroq, type GroqEvent } from '../src/llm/groq';
+import { buildGroqBody, GroqError, parseSse, streamAnswer, streamGroq, type GroqEvent } from '../src/llm/groq';
 
 const encoder = new TextEncoder();
 
@@ -219,5 +219,221 @@ describe('streamGroq', () => {
     expect(err.retryAfter).toBeNull();
     expect(err.message).not.toContain('UPSTREAM_SECRET_BODY');
     expect(err.message).not.toContain('test-key');
+  });
+});
+
+describe('streamAnswer', () => {
+  const MODEL = 'openai/gpt-oss-120b';
+  const FALLBACK = 'openai/gpt-oss-20b';
+
+  const answer = (text: string): string =>
+    sse([
+      { choices: [{ delta: { content: text }, finish_reason: null }] },
+      { choices: [{ delta: {}, finish_reason: 'stop' }], usage: { prompt_tokens: 10, completion_tokens: 2 } },
+    ]);
+
+  const limited = (retryAfter?: string): Response =>
+    new Response('{"error":"rate limit"}', {
+      status: 429,
+      headers: retryAfter === undefined ? {} : { 'retry-after': retryAfter },
+    });
+
+  interface Attempt {
+    key: string;
+    model: string;
+  }
+
+  /** Answers each upstream call from `respond` and records which key and model it used. */
+  function mockGroq(respond: (attempt: Attempt, n: number) => Response): Attempt[] {
+    const attempts: Attempt[] = [];
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (_input, init) => {
+      const key = (new Headers(init?.headers).get('authorization') ?? '').replace(/^Bearer /, '');
+      const model = (JSON.parse(init?.body as string) as { model: string }).model;
+      const attempt = { key, model };
+      attempts.push(attempt);
+      return respond(attempt, attempts.length);
+    });
+    return attempts;
+  }
+
+  const textOf = (events: GroqEvent[]): string =>
+    events.map((e) => (e.type === 'delta' ? e.text : '')).join('');
+
+  async function failure(gen: AsyncGenerator<GroqEvent>): Promise<GroqError> {
+    try {
+      await collect(gen);
+    } catch (err) {
+      expect(err).toBeInstanceOf(GroqError);
+      return err as GroqError;
+    }
+    throw new Error('streamAnswer did not throw');
+  }
+
+  it('uses the single key and the requested model, exactly like streamGroq', async () => {
+    const attempts = mockGroq(() => okResponse(answer('Hello')));
+    const controller = new AbortController();
+    const events = await collect(streamAnswer({ GROQ_API_KEY: 'key-one' }, MODEL, messages, controller.signal));
+    expect(events).toEqual<GroqEvent[]>([
+      { type: 'delta', text: 'Hello' },
+      { type: 'end', finishReason: 'stop', usage: { promptTokens: 10, completionTokens: 2, cachedTokens: 0 } },
+    ]);
+    expect(attempts).toEqual([{ key: 'key-one', model: MODEL }]);
+    const init = vi.mocked(globalThis.fetch).mock.calls[0]?.[1];
+    expect(init?.signal).toBe(controller.signal);
+  });
+
+  it('moves to the second key on a 429 and keeps the model', async () => {
+    const attempts = mockGroq(({ key }) => (key === 'key-one' ? limited('30') : okResponse(answer('From two'))));
+    const env = { GROQ_API_KEY: 'key-one', GROQ_API_KEYS: 'key-two', FALLBACK_MODEL: FALLBACK };
+    const events = await collect(streamAnswer(env, MODEL, messages));
+    expect(textOf(events)).toBe('From two');
+    expect(events.at(-1)?.type).toBe('end');
+    expect(attempts).toEqual([
+      { key: 'key-one', model: MODEL },
+      { key: 'key-two', model: MODEL },
+    ]);
+  });
+
+  it('falls back to FALLBACK_MODEL once every key is rate limited', async () => {
+    const attempts = mockGroq(({ model }) => (model === MODEL ? limited('30') : okResponse(answer('Smaller model'))));
+    const env = { GROQ_API_KEY: 'key-one', GROQ_API_KEYS: 'key-two', FALLBACK_MODEL: FALLBACK };
+    expect(textOf(await collect(streamAnswer(env, MODEL, messages)))).toBe('Smaller model');
+    expect(attempts).toEqual([
+      { key: 'key-one', model: MODEL },
+      { key: 'key-two', model: MODEL },
+      { key: 'key-one', model: FALLBACK },
+    ]);
+  });
+
+  it('throws one 429 with the smallest retry-after when everything is rate limited', async () => {
+    const waits = ['40', undefined, '7', '12.2'];
+    const attempts = mockGroq((_attempt, n) => limited(waits[n - 1]));
+    const env = { GROQ_API_KEY: 'key-one', GROQ_API_KEYS: 'key-two', FALLBACK_MODEL: FALLBACK };
+    const err = await failure(streamAnswer(env, MODEL, messages));
+    expect(err.status).toBe(429);
+    expect(err.retryAfter).toBe(7);
+    expect(attempts).toHaveLength(4);
+  });
+
+  it('reports a null retry-after when Groq never sent one', async () => {
+    mockGroq(() => limited());
+    const err = await failure(streamAnswer({ GROQ_API_KEY: 'key-one', GROQ_API_KEYS: 'key-two' }, MODEL, messages));
+    expect(err.status).toBe(429);
+    expect(err.retryAfter).toBeNull();
+  });
+
+  it('does not try a fallback model that is unset or the same as the requested one', async () => {
+    for (const fallback of [undefined, '', MODEL]) {
+      const attempts = mockGroq(() => limited('5'));
+      const env = { GROQ_API_KEY: 'key-one', FALLBACK_MODEL: fallback };
+      expect((await failure(streamAnswer(env, MODEL, messages))).status).toBe(429);
+      expect(attempts).toEqual([{ key: 'key-one', model: MODEL }]);
+      vi.restoreAllMocks();
+    }
+  });
+
+  it('does not retry a 500 on another key or model', async () => {
+    const attempts = mockGroq(() => new Response('UPSTREAM_SECRET_BODY', { status: 500 }));
+    const env = { GROQ_API_KEY: 'key-one', GROQ_API_KEYS: 'key-two', FALLBACK_MODEL: FALLBACK };
+    const err = await failure(streamAnswer(env, MODEL, messages));
+    expect(err.status).toBe(500);
+    expect(attempts).toEqual([{ key: 'key-one', model: MODEL }]);
+  });
+
+  it('skips a key Groq rejects, logging its index and never the key', async () => {
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const attempts = mockGroq(({ key }) =>
+      key === 'key-one' ? new Response('{"error":"invalid api key"}', { status: 401 }) : okResponse(answer('Still here')),
+    );
+    const env = { GROQ_API_KEY: 'key-one', GROQ_API_KEYS: 'key-two' };
+    expect(textOf(await collect(streamAnswer(env, MODEL, messages)))).toBe('Still here');
+    expect(attempts.map((a) => a.key)).toEqual(['key-one', 'key-two']);
+    expect(log.mock.calls).toEqual([['groq key rejected', 0]]);
+  });
+
+  it('throws the last rejection when every key is rejected, without trying them on the fallback', async () => {
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const attempts = mockGroq(({ key }) => new Response('', { status: key === 'key-one' ? 401 : 403 }));
+    const env = { GROQ_API_KEY: 'key-one', GROQ_API_KEYS: 'key-two', FALLBACK_MODEL: FALLBACK };
+    const err = await failure(streamAnswer(env, MODEL, messages));
+    expect(err.status).toBe(403);
+    expect(attempts).toHaveLength(2);
+    expect(log.mock.calls).toEqual([
+      ['groq key rejected', 0],
+      ['groq key rejected', 1],
+    ]);
+  });
+
+  it('answers "busy" rather than "rejected" when one key is bad and the other is rate limited', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const attempts = mockGroq(({ key }) => (key === 'key-one' ? new Response('', { status: 401 }) : limited('9')));
+    const env = { GROQ_API_KEY: 'key-one', GROQ_API_KEYS: 'key-two', FALLBACK_MODEL: FALLBACK };
+    const err = await failure(streamAnswer(env, MODEL, messages));
+    expect(err.status).toBe(429);
+    expect(err.retryAfter).toBe(9);
+    // The rejected key is not tried again on the fallback model.
+    expect(attempts).toEqual([
+      { key: 'key-one', model: MODEL },
+      { key: 'key-two', model: MODEL },
+      { key: 'key-two', model: FALLBACK },
+    ]);
+  });
+
+  it('ignores blank and duplicate entries in GROQ_API_KEYS', async () => {
+    const attempts = mockGroq(() => limited('3'));
+    const env = { GROQ_API_KEY: ' key-one ', GROQ_API_KEYS: ' key-two, ,key-one,,key-two , key-three,' };
+    await failure(streamAnswer(env, MODEL, messages));
+    expect(attempts.map((a) => a.key)).toEqual(['key-one', 'key-two', 'key-three']);
+  });
+
+  it('never restarts once text has been sent', async () => {
+    // Erroring in the same turn as the enqueue would drop the queued bytes, so fail on the next read.
+    let reads = 0;
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        reads += 1;
+        if (reads === 1) {
+          controller.enqueue(encoder.encode('data: {"choices":[{"delta":{"content":"Half an ans"}}]}\n\n'));
+        } else {
+          controller.error(new Error('connection reset'));
+        }
+      },
+    });
+    const attempts = mockGroq(() => new Response(body, { status: 200 }));
+    const env = { GROQ_API_KEY: 'key-one', GROQ_API_KEYS: 'key-two', FALLBACK_MODEL: FALLBACK };
+    const seen: GroqEvent[] = [];
+    await expect(
+      (async () => {
+        for await (const event of streamAnswer(env, MODEL, messages)) seen.push(event);
+      })(),
+    ).rejects.toThrow('connection reset');
+    expect(seen).toEqual([{ type: 'delta', text: 'Half an ans' }]);
+    expect(attempts).toHaveLength(1);
+  });
+
+  it('keeps every key out of thrown messages and logs', async () => {
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const env = { GROQ_API_KEY: 'gsk_first_secret', GROQ_API_KEYS: 'gsk_second_secret', FALLBACK_MODEL: FALLBACK };
+    const responses: (() => Response)[] = [
+      () => limited('4'),
+      () => new Response('gsk_first_secret', { status: 500 }),
+      () => new Response('gsk_second_secret', { status: 401 }),
+    ];
+    for (const respond of responses) {
+      mockGroq(respond);
+      const err = await failure(streamAnswer(env, MODEL, messages));
+      const shown = `${err.message} ${String(err.stack)} ${JSON.stringify(err)}`;
+      expect(shown).not.toContain('gsk_first_secret');
+      expect(shown).not.toContain('gsk_second_secret');
+      vi.mocked(globalThis.fetch).mockRestore();
+    }
+    expect(JSON.stringify(log.mock.calls)).not.toContain('gsk_');
+  });
+
+  it('fails as a rejected request, without calling Groq, when no key is configured', async () => {
+    const attempts = mockGroq(() => okResponse(answer('unreachable')));
+    const err = await failure(streamAnswer({ GROQ_API_KEY: '', GROQ_API_KEYS: ' , ' }, MODEL, messages));
+    expect(err.status).toBe(401);
+    expect(attempts).toEqual([]);
   });
 });

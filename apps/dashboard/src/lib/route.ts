@@ -14,6 +14,7 @@ export type SiteTab = (typeof SITE_TABS)[number];
 export type Route =
   | { name: 'sites' }
   | { name: 'site'; id: string; tab: SiteTab }
+  | { name: 'reset'; token: string }
   | { name: 'not_found' };
 
 const isTab = (value: string | undefined): value is SiteTab =>
@@ -30,6 +31,11 @@ function decode(part: string): string | null {
 export function parseHash(hash: string): Route {
   const parts = hash.replace(/^#\/?/, '').split('/').filter(Boolean);
   if (parts.length === 0) return { name: 'sites' };
+  if (parts[0] === 'reset') {
+    // `#/reset/<token>`, the link in a password reset mail.
+    const token = decode(parts[1] ?? '');
+    return token && parts.length === 2 ? { name: 'reset', token } : { name: 'not_found' };
+  }
   if (parts[0] !== 'sites') return { name: 'not_found' };
   if (parts.length === 1) return { name: 'sites' };
   const id = decode(parts[1] ?? '');

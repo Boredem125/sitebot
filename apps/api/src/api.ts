@@ -11,10 +11,13 @@ import {
 } from '@sitebot/shared';
 import {
   DUMMY_PASSWORD_HASH,
+  PASSWORD_RULE,
   createSession,
   destroySession,
   hashPassword,
+  isValidPassword,
   originGuard,
+  parseEmail,
   requireUser,
   verifyPassword,
   type AppEnv,
@@ -23,6 +26,7 @@ import { parseJson, siteForUser, toSite, toSource, type SiteRow, type SourceRow 
 import type { Env, IngestJob } from './env';
 import { applyBrand, detectBrand, isEmptyBrand } from './ingest/brand';
 import { fetchText } from './ingest/crawl';
+import { batches, deleteChunks } from './ingest/index-doc';
 import { bareHost, isSafeUrl, normalizeUrl } from './ingest/url';
 import { insights } from './insights';
 import { monthlyUsage, rateLimit } from './limits';
@@ -36,7 +40,6 @@ const PREVIEW_CHARS = 120;
 const CONVERSATION_PAGE = 50;
 const BAD_LOGIN = 'Wrong email or password';
 
-const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const COLOR = /^#[0-9a-fA-F]{6}$/;
 const FONT = /^[A-Za-z0-9][A-Za-z0-9 _-]{0,59}$/;
 const HOST_LABEL = '[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?';
@@ -141,6 +144,30 @@ async function sourceResponse(c: Ctx, siteId: string, sourceId: string): Promise
   return row ? c.json({ source: toSource(row) }) : notFound(c);
 }
 
+/** Tenant-scoped lookup: null unless the source belongs to `siteId`. */
+const sourceOfSite = (c: Ctx, siteId: string): Promise<SourceRow | null> =>
+  c.env.DB.prepare('SELECT * FROM sources WHERE id = ?1 AND site_id = ?2')
+    .bind(c.req.param('sid') ?? '', siteId)
+    .first<SourceRow>();
+
+/**
+ * Removes the indexed chunks of one source, or of the whole site when `sourceId` is absent,
+ * from Vectorize and D1. Call it before deleting the rows that own the chunks: a vector
+ * whose chunk row is already gone can never be found again.
+ */
+async function purgeChunks(env: Env, siteId: string, sourceId?: string): Promise<void> {
+  const query =
+    sourceId === undefined
+      ? env.DB.prepare('SELECT id FROM chunks WHERE site_id = ?1').bind(siteId)
+      : env.DB.prepare('SELECT id FROM chunks WHERE site_id = ?1 AND source_id = ?2').bind(siteId, sourceId);
+  const { results } = await query.all<{ id: string }>();
+  await deleteChunks(
+    env,
+    siteId,
+    results.map((row) => row.id),
+  );
+}
+
 export const api = new Hono<AppEnv>();
 
 api.onError((err, c) => {
@@ -160,12 +187,10 @@ api.post('/auth/signup', async (c) => {
   }
   const body = await readJson(c);
   if (!body) return invalid(c, 'Invalid JSON body');
-  const email = typeof body.email === 'string' ? body.email.trim().toLowerCase() : '';
-  if (email.length > 254 || !EMAIL.test(email)) return invalid(c, 'Enter a valid email address');
+  const email = parseEmail(body.email);
+  if (!email) return invalid(c, 'Enter a valid email address');
   const password = body.password;
-  if (typeof password !== 'string' || password.length < 8 || password.length > 200) {
-    return invalid(c, 'Password must be 8 to 200 characters');
-  }
+  if (!isValidPassword(password)) return invalid(c, PASSWORD_RULE);
 
   const user: User = { id: newId(), email };
   const inserted = await c.env.DB.prepare(
@@ -399,6 +424,27 @@ api.post('/sites/:id/brand', async (c) => {
   return updated ? c.json({ site: toSite(updated) }) : notFound(c);
 });
 
+api.delete('/sites/:id', async (c) => {
+  const site = await ownedSite(c);
+  if (!site) return notFound(c);
+  const db = c.env.DB;
+
+  // Order matters: vectors and files go first, while the rows that name them still exist.
+  // If a step fails the request can simply be repeated; nothing is left unreachable.
+  await purgeChunks(c.env, site.id);
+  const { results: uploads } = await db
+    .prepare('SELECT r2_key FROM sources WHERE site_id = ?1 AND r2_key IS NOT NULL')
+    .bind(site.id)
+    .all<{ r2_key: string }>();
+  for (const group of batches(uploads.map((row) => row.r2_key))) await c.env.UPLOADS.delete(group);
+  // An ingest job that was mid-flight may have indexed more since the first pass.
+  await purgeChunks(c.env, site.id);
+
+  // Cascades to sources, crawl_pages, chunks, conversations, messages, usage_daily and leads.
+  await db.prepare('DELETE FROM sites WHERE id = ?1 AND user_id = ?2').bind(site.id, c.get('user').id).run();
+  return c.json({ ok: true as const });
+});
+
 // ---------- Sources ----------
 
 api.get('/sites/:id/sources', async (c) => {
@@ -504,6 +550,52 @@ api.post('/sites/:id/sources/qa', async (c) => {
   ).run();
   await enqueue(c.env, { type: 'qa', siteId: site.id, sourceId });
   return sourceResponse(c, site.id, sourceId);
+});
+
+api.delete('/sites/:id/sources/:sid', async (c) => {
+  const site = await ownedSite(c);
+  if (!site) return notFound(c);
+  const source = await sourceOfSite(c, site.id);
+  if (!source) return notFound(c);
+  const db = c.env.DB;
+
+  // Same order as deleting a site: indexed content and the file first, the row last.
+  await purgeChunks(c.env, site.id, source.id);
+  // With its frontier gone, page jobs still in the queue for this crawl do nothing.
+  await db.prepare('DELETE FROM crawl_pages WHERE source_id = ?1').bind(source.id).run();
+  if (source.r2_key) await c.env.UPLOADS.delete(source.r2_key);
+  // A page that was being indexed during the first pass may have added chunks since.
+  await purgeChunks(c.env, site.id, source.id);
+
+  await db.prepare('DELETE FROM sources WHERE id = ?1 AND site_id = ?2').bind(source.id, site.id).run();
+  return c.json({ ok: true as const });
+});
+
+api.post('/sites/:id/sources/:sid/recrawl', async (c) => {
+  const site = await ownedSite(c);
+  if (!site) return notFound(c);
+  const source = await sourceOfSite(c, site.id);
+  if (!source) return notFound(c);
+  if (source.kind !== 'crawl') return invalid(c, 'Only website sources can be re-crawled');
+  const busy = (): Response => apiError(c, 409, 'conflict', 'This source is already being indexed');
+  if (source.status === 'pending' || source.status === 'processing') return busy();
+
+  // Each re-crawl fetches up to a whole site, so it is limited per site.
+  const limit = await rateLimit(c.env.DB, `recrawl:${site.id}`, 6, 3600);
+  if (!limit.ok) {
+    return apiError(c, 429, 'rate_limited', 'Too many re-crawls. Try again later.', limit.retryAfter);
+  }
+
+  // The status check is repeated in the UPDATE so two clicks cannot queue two crawls.
+  const claimed = await c.env.DB.prepare(
+    `UPDATE sources SET status = 'pending', error = NULL, updated_at = ?3
+     WHERE id = ?1 AND site_id = ?2 AND status NOT IN ('pending', 'processing')`,
+  )
+    .bind(source.id, site.id, Date.now())
+    .run();
+  if (claimed.meta.changes === 0) return busy();
+  await enqueue(c.env, { type: 'crawl', siteId: site.id, sourceId: source.id });
+  return sourceResponse(c, site.id, source.id);
 });
 
 // ---------- Conversations ----------

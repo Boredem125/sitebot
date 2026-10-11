@@ -5,6 +5,7 @@ import { Button, ErrorState, Notice, Spinner } from './components/ui';
 import { errorMessage } from './lib/format';
 import { navigate, siteHref, sitesHref, useRoute } from './lib/route';
 import { AuthPage } from './pages/AuthPage';
+import { ResetPage } from './pages/ResetPage';
 import { SitePage } from './pages/SitePage';
 import { SitesPage } from './pages/SitesPage';
 
@@ -17,6 +18,7 @@ type Session =
 export function App() {
   const [session, setSession] = useState<Session>({ status: 'loading' });
   const [attempt, setAttempt] = useState(0);
+  const route = useRoute();
 
   useEffect(() => {
     let cancelled = false;
@@ -51,6 +53,14 @@ export function App() {
     navigate(sitesHref);
     setSession({ status: 'signed_out', expired: false });
   }, []);
+
+  // A reset signs out every device, this one included, so the shell must not carry on as signed in.
+  const onPasswordReset = useCallback(() => {
+    setSession((prev) => (prev.status === 'signed_in' ? { status: 'signed_out', expired: false } : prev));
+  }, []);
+
+  // The link from a reset mail works whether or not this browser has a session.
+  if (route.name === 'reset') return <ResetPage token={route.token} onReset={onPasswordReset} />;
 
   if (session.status === 'loading') {
     return (

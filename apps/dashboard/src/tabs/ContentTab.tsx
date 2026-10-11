@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { LIMITS } from '@sitebot/shared';
 import type { Source, SourceKind, SourceStatus } from '@sitebot/shared';
-import { addCrawl, addQa, listSources, uploadFile } from '../api';
+import { ApiRequestError, addCrawl, addQa, deleteSource, listSources, recrawlSource, uploadFile } from '../api';
 import { Button, EmptyState, ErrorState, Notice, Spinner } from '../components/ui';
 import {
   errorMessage,
@@ -64,7 +64,41 @@ export function ContentTab({ siteId }: { siteId: string }) {
     };
   }, [active, sources, retry, siteId, setData]);
 
-  const onAdded = (source: Source): void => setData((prev) => [source, ...prev.filter((s) => s.id !== source.id)]);
+  // A refresh started by a row outlives the row (a deleted row unmounts), so it is tied to the tab.
+  const refreshCtrl = useRef<AbortController | null>(null);
+  useEffect(() => () => refreshCtrl.current?.abort(), []);
+
+  // A refresh still in flight was read before these changes and would undo them, so it is dropped.
+  const onAdded = (source: Source): void => {
+    refreshCtrl.current?.abort();
+    setData((prev) => [source, ...prev.filter((s) => s.id !== source.id)]);
+  };
+
+  // A re-crawl comes back 'pending', which makes the list active and starts the polling above.
+  const onChanged = (source: Source): void => {
+    refreshCtrl.current?.abort();
+    setData((prev) => prev.map((s) => (s.id === source.id ? source : s)));
+  };
+
+  /** Re-reads the list in place, without the loading state a full reload would show. */
+  const refresh = (): void => {
+    refreshCtrl.current?.abort();
+    const ctrl = new AbortController();
+    refreshCtrl.current = ctrl;
+    listSources(siteId, ctrl.signal).then(
+      (next) => {
+        if (!ctrl.signal.aborted) setData(next);
+      },
+      () => {
+        // The row is already gone from the list; the next poll or visit corrects anything else.
+      },
+    );
+  };
+
+  const onDeleted = (sourceId: string): void => {
+    setData((prev) => prev.filter((s) => s.id !== sourceId));
+    refresh();
+  };
 
   return (
     <div className="stack-lg">
@@ -86,7 +120,14 @@ export function ContentTab({ siteId }: { siteId: string }) {
         {sources !== null && sources.length > 0 && (
           <ul className="source-list">
             {sources.map((source) => (
-              <SourceRow key={source.id} source={source} />
+              <SourceRow
+                key={source.id}
+                siteId={siteId}
+                source={source}
+                onChanged={onChanged}
+                onDeleted={onDeleted}
+                onStale={refresh}
+              />
             ))}
           </ul>
         )}
@@ -101,19 +142,102 @@ export function ContentTab({ siteId }: { siteId: string }) {
   );
 }
 
-function SourceRow({ source }: { source: Source }) {
+interface SourceRowProps {
+  siteId: string;
+  source: Source;
+  onChanged: (source: Source) => void;
+  onDeleted: (sourceId: string) => void;
+  /** The row acted on out-of-date information: the list should be read again. */
+  onStale: () => void;
+}
+
+function SourceRow({ siteId, source, onChanged, onDeleted, onStale }: SourceRowProps) {
   const href = source.kind === 'crawl' ? safeHttpUrl(source.label) : null;
   const unit = source.kind === 'crawl' ? 'page' : 'document';
+  const [confirming, setConfirming] = useState(false);
+  const [busy, setBusy] = useState<'recrawl' | 'delete' | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const titleId = `source-${source.id}`;
+
+  async function onRecrawl(): Promise<void> {
+    setBusy('recrawl');
+    setError(null);
+    try {
+      onChanged(await recrawlSource(siteId, source.id));
+    } catch (err) {
+      if (err instanceof ApiRequestError && (err.status === 409 || err.status === 404)) {
+        // Someone else started it, or the source is gone. Either way the list here is old.
+        onStale();
+      }
+      setError(
+        err instanceof ApiRequestError && err.status === 409
+          ? 'This source is already being indexed.'
+          : `Could not start the re-crawl. ${errorMessage(err)}`,
+      );
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function onDelete(): Promise<void> {
+    setBusy('delete');
+    setError(null);
+    try {
+      await deleteSource(siteId, source.id);
+      // The row unmounts with the list update, so there is no state left to reset.
+      onDeleted(source.id);
+    } catch (err) {
+      if (err instanceof ApiRequestError && err.status === 404) {
+        // Already deleted elsewhere: the outcome the owner asked for.
+        onDeleted(source.id);
+        return;
+      }
+      setError(`Could not delete this source. ${errorMessage(err)}`);
+      setBusy(null);
+    }
+  }
+
   return (
     <li className="source">
-      <div className="source-main">
-        <span className="kind">{KIND_LABELS[source.kind]}</span>
-        {href ? (
-          <a className="source-label" href={href} target="_blank" rel="noopener noreferrer">
-            {source.label}
-          </a>
-        ) : (
-          <span className="source-label">{source.label}</span>
+      <div className="source-head">
+        <div className="source-main">
+          <span className="kind">{KIND_LABELS[source.kind]}</span>
+          {href ? (
+            <a id={titleId} className="source-label" href={href} target="_blank" rel="noopener noreferrer">
+              {source.label}
+            </a>
+          ) : (
+            <span id={titleId} className="source-label">
+              {source.label}
+            </span>
+          )}
+        </div>
+        {!confirming && (
+          <div className="source-actions">
+            {source.kind === 'crawl' && (
+              <Button
+                className="btn-sm"
+                busy={busy === 'recrawl'}
+                disabled={isActive(source) || busy !== null}
+                title={isActive(source) ? 'This source is being indexed' : undefined}
+                aria-describedby={titleId}
+                onClick={() => void onRecrawl()}
+              >
+                Re-crawl
+              </Button>
+            )}
+            <Button
+              className="btn-sm btn-danger-quiet"
+              disabled={busy !== null}
+              aria-describedby={titleId}
+              onClick={() => {
+                setError(null);
+                setConfirming(true);
+              }}
+            >
+              Delete
+            </Button>
+          </div>
         )}
       </div>
       <div className="source-meta">
@@ -128,6 +252,21 @@ function SourceRow({ source }: { source: Source }) {
       {source.status === 'error' && (
         <p className="source-error">{source.error ?? 'This source could not be indexed.'}</p>
       )}
+      {confirming && (
+        <div className="confirm-row" role="group" aria-label={`Delete ${source.label}`}>
+          <p>Delete this source? The bot stops using what it learned from it. This cannot be undone.</p>
+          <div className="source-actions">
+            <Button className="btn-sm btn-danger" busy={busy === 'delete'} onClick={() => void onDelete()}>
+              Delete source
+            </Button>
+            {/* Focus lands on the safe choice, so a stray Enter does not delete anything. */}
+            <Button className="btn-sm" autoFocus disabled={busy !== null} onClick={() => setConfirming(false)}>
+              Cancel
+            </Button>
+          </div>
+        </div>
+      )}
+      {error && <Notice kind="error">{error}</Notice>}
     </li>
   );
 }

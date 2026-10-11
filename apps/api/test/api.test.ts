@@ -1012,8 +1012,10 @@ describe('tenant isolation', () => {
     expect(res.status).toBe(404);
     expect((await json<ApiError>(res)).code).toBe('not_found');
     expect((await call(t, '/nope')).status).toBe(401);
-    // DELETE is not part of the contract.
+    // PUT is not part of the contract, and must not fall through to another method's handler.
     const site = await createSite(t, a);
-    expect((await call(t, `/sites/${site.id}`, { method: 'DELETE', cookie: a.cookie })).status).toBe(404);
+    const put = await call(t, `/sites/${site.id}`, { method: 'PUT', json: { name: 'Replaced' }, cookie: a.cookie });
+    expect(put.status).toBe(404);
+    expect((await call(t, `/sites/${site.id}`, { cookie: a.cookie })).status).toBe(200);
   });
 });

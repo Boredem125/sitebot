@@ -1,1 +1,134 @@
 /* Styles for the Settings tab and the password reset screens. */
+
+/* ---------- shared: small and destructive buttons ---------- */
+
+.btn-sm {
+  min-height: 30px;
+  padding: 3px 10px;
+  font-size: 0.85rem;
+}
+
+.btn-danger {
+  border-color: var(--err);
+  background: var(--err);
+  color: var(--surface);
+}
+
+.btn-danger:hover:not(:disabled) {
+  border-color: var(--err);
+  background: color-mix(in srgb, var(--err) 86%, var(--text));
+}
+
+.btn-danger .spinner {
+  border-color: color-mix(in srgb, var(--surface) 35%, transparent);
+  border-top-color: var(--surface);
+}
+
+/* Destructive, but one step away from a confirmation: quiet until hovered. */
+.btn-danger-quiet {
+  color: var(--err);
+}
+
+.btn-danger-quiet:hover:not(:disabled) {
+  border-color: var(--err);
+  background: var(--err-soft);
+}
+
+/* A button that reads as a link, for actions that change the view without navigating. */
+.link-btn {
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  font-size: 0.9rem;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.link-btn:hover {
+  color: var(--accent-hover);
+}
+
+/* ---------- auth: forgot and reset ---------- */
+
+.auth-alt {
+  align-self: center;
+  text-align: center;
+}
+
+.auth-card .notice a {
+  color: inherit;
+  font-weight: 600;
+}
+
+/* ---------- content: per-source actions ---------- */
+
+.source-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px 16px;
+}
+
+.source-head .source-main {
+  flex: 1 1 240px;
+}
+
+.source-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.confirm-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+  padding: 10px 12px;
+  border: 1px solid var(--err);
+  border-radius: var(--radius-sm);
+  background: var(--err-soft);
+  font-size: 0.9rem;
+}
+
+.confirm-row p {
+  flex: 1 1 240px;
+}
+
+/* ---------- settings: delete site ---------- */
+
+.danger-card {
+  border-color: var(--err);
+}
+
+.danger-card > h2 {
+  color: var(--err);
+}
+
+.danger-list {
+  margin-top: 12px;
+  padding-left: 20px;
+  list-style: disc;
+}
+
+.danger-list li + li {
+  margin-top: 4px;
+}
+
+.danger-form {
+  max-width: 420px;
+  margin-top: 16px;
+}
+
+.danger-name {
+  font-family: var(--mono);
+  font-weight: 650;
+  overflow-wrap: anywhere;
+  user-select: all;
+}

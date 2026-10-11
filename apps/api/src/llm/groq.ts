@@ -98,17 +98,83 @@ function parseRetryAfter(header: string | null): number | null {
   return Number.isFinite(seconds) && seconds >= 0 ? Math.ceil(seconds) : null;
 }
 
+type KeyEnv = Pick<Env, 'GROQ_API_KEY' | 'GROQ_API_KEYS' | 'FALLBACK_MODEL'>;
+
+/** GROQ_API_KEY first, then GROQ_API_KEYS in order, without blanks or repeats. */
+function groqKeys(env: KeyEnv): string[] {
+  const keys: string[] = [];
+  for (const entry of [env.GROQ_API_KEY ?? '', ...(env.GROQ_API_KEYS ?? '').split(',')]) {
+    const key = entry.trim();
+    if (key !== '' && !keys.includes(key)) keys.push(key);
+  }
+  return keys;
+}
+
 /**
  * Streams an answer for the chat endpoint. This is the one place that decides which key
  * and which model serve a request.
+ *
+ * A rate-limited key gives way to the next one, and once every key is rate limited on
+ * `model` the same keys are tried on FALLBACK_MODEL (Groq counts limits per model). Keys
+ * are only ever named by their position in the list, never by value.
  */
-export function streamAnswer(
-  env: Pick<Env, 'GROQ_API_KEY' | 'GROQ_API_KEYS' | 'FALLBACK_MODEL'>,
+export async function* streamAnswer(
+  env: KeyEnv,
   model: string,
   messages: GroqMessage[],
   signal?: AbortSignal,
 ): AsyncGenerator<GroqEvent> {
-  return streamGroq(env.GROQ_API_KEY, model, messages, signal);
+  const keys = groqKeys(env);
+  const fallback = (env.FALLBACK_MODEL ?? '').trim();
+  const models = fallback !== '' && fallback !== model ? [model, fallback] : [model];
+
+  // A key Groq refused outright is bad for every model, so it is not tried again.
+  const rejected = new Set<number>();
+  let rejection: GroqError | null = null;
+  let rateLimited = false;
+  let retryAfter: number | null = null;
+
+  for (const candidate of models) {
+    for (const [index, key] of keys.entries()) {
+      if (rejected.has(index)) continue;
+      const stream = streamGroq(key, candidate, messages, signal);
+      let first: IteratorResult<GroqEvent>;
+      try {
+        // The HTTP status is known before the first event, so a failure here has sent the
+        // visitor nothing yet. Past this point the attempt is final: text is never restarted.
+        first = await stream.next();
+      } catch (err) {
+        if (!(err instanceof GroqError)) throw err;
+        if (err.status === 429) {
+          rateLimited = true;
+          if (err.retryAfter !== null && (retryAfter === null || err.retryAfter < retryAfter)) {
+            retryAfter = err.retryAfter;
+          }
+          continue;
+        }
+        if (err.status === 401 || err.status === 403) {
+          console.error('groq key rejected', index);
+          rejected.add(index);
+          rejection = err;
+          continue;
+        }
+        throw err;
+      }
+      try {
+        if (!first.done) yield first.value;
+        yield* stream;
+      } finally {
+        // Frees the upstream connection when the consumer stops at the first event.
+        await stream.return(undefined);
+      }
+      return;
+    }
+  }
+
+  // A key that is merely busy will work again, so "busy" wins over "rejected".
+  if (rateLimited) throw new GroqError(429, retryAfter);
+  // No usable key at all, or none configured: the same outcome as Groq refusing the request.
+  throw rejection ?? new GroqError(401, null);
 }
 
 /** Streams one chat completion: text deltas, then exactly one `end` event. */
