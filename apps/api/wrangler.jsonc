@@ -21,8 +21,9 @@
     }
   ],
   // `wrangler vectorize create sitebot-chunks --dimensions=1024 --metric=cosine`
-  "vectorize": [{ "binding": "VECTORIZE", "index_name": "sitebot-chunks" }],
-  "ai": { "binding": "AI" },
+  // Vectorize and Workers AI have no local simulator: `wrangler dev` uses the real ones.
+  "vectorize": [{ "binding": "VECTORIZE", "index_name": "sitebot-chunks", "remote": true }],
+  "ai": { "binding": "AI", "remote": true },
   "r2_buckets": [{ "binding": "UPLOADS", "bucket_name": "sitebot-uploads" }],
   "queues": {
     "producers": [{ "binding": "INGEST_QUEUE", "queue": "sitebot-ingest" }],
