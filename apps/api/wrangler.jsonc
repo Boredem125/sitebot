@@ -15,8 +15,7 @@
     {
       "binding": "DB",
       "database_name": "sitebot",
-      // Replace with the id printed by `wrangler d1 create sitebot`.
-      "database_id": "00000000-0000-0000-0000-000000000000",
+      "database_id": "206e1caa-4552-4bfb-8a1e-b05b732af485",
       "migrations_dir": "migrations"
     }
   ],

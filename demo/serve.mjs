@@ -6,6 +6,11 @@ import { join } from 'node:path';
 
 const port = Number(process.env.PORT) || 4000;
 
+// Optional: `node demo/serve.mjs pk_...` (or SITE_KEY=pk_...) fills the key into the page,
+// so index.html does not need editing.
+const givenKey = process.argv[2] ?? process.env.SITE_KEY ?? '';
+const siteKey = /^pk_[A-Za-z0-9]+$/.test(givenKey) ? givenKey : '';
+
 // Fixed map from route to file. The request URL only ever selects a key here and
 // is never joined into a filesystem path, so there is nothing to traverse.
 const routes = {
@@ -33,7 +38,8 @@ const server = createServer(async (req, res) => {
   }
 
   try {
-    send(200, route.type, await readFile(route.file));
+    const body = await readFile(route.file);
+    send(200, route.type, path === '/' && siteKey ? body.toString().replaceAll('pk_REPLACE_ME', siteKey) : body);
   } catch {
     send(
       404,
