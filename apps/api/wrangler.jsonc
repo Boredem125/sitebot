@@ -7,8 +7,8 @@
   "observability": { "enabled": true },
   "vars": {
     "DEFAULT_MODEL": "openai/gpt-oss-120b",
-    // Comma-separated origins allowed to call /api. Add the Pages URL before deploying.
-    "DASHBOARD_ORIGIN": "http://localhost:5173"
+    // Comma-separated origins allowed to call /api.
+    "DASHBOARD_ORIGIN": "https://sitebot-dashboard.pages.dev,http://localhost:5173"
   },
   // Secret, not listed here: GROQ_API_KEY (`wrangler secret put GROQ_API_KEY`, or .dev.vars locally).
   "d1_databases": [
