@@ -61,7 +61,7 @@ function groqSse(texts: string[], usage: unknown = USAGE): string {
 }
 
 /** Mocks the Groq call. A fresh Response per call, because a body can be read once. */
-function mockGroq(texts: string[] = ['Plans start ', 'at $10.']) {
+function mockGroq(texts: string[] = ['Plans start ', 'at $10.', ' [1]']) {
   return vi
     .spyOn(globalThis, 'fetch')
     .mockImplementation(async () => new Response(groqSse(texts), { status: 200 }));
@@ -192,8 +192,9 @@ describe('POST /v1/chat', () => {
     const conversationId = conversationIdOf(events);
     expect(conversationId).toMatch(/^[0-9a-f-]{36}$/);
     expect(events.slice(1, 3)).toEqual([
-      { type: 'delta', text: 'Plans start ' },
-      { type: 'delta', text: 'at $10.' },
+      // Trailing whitespace is held back until the next piece, in case a [n] marker follows.
+      { type: 'delta', text: 'Plans start' },
+      { type: 'delta', text: ' at $10.' },
     ]);
     expect(events[3]).toEqual({
       type: 'done',
@@ -234,6 +235,17 @@ describe('POST /v1/chat', () => {
     ]);
   });
 
+  it('shows no source link when the model cites no passage', async () => {
+    const testEnv = makeEnv();
+    const site = await seedSite(env.DB);
+    await seedChunks(testEnv, site.siteId, [PRICING]);
+    mockGroq(["I don't know. Please contact the site directly."]);
+
+    const { events } = await chat(testEnv, request(site.publicKey, 'What is the capital of France?'));
+    expect(events.at(-1)).toEqual({ type: 'done', sources: [] });
+    expect(JSON.parse((await savedMessages(site.siteId))[1]?.sources ?? 'null')).toEqual([]);
+  });
+
   it('uses the site model when one is set', async () => {
     const testEnv = makeEnv();
     const site = await seedSite(env.DB);
@@ -255,7 +267,7 @@ describe('POST /v1/chat', () => {
       { content: 'alpha plan beta', url: 'https://example.com/b', title: '' },
       { content: 'alpha plan gamma', url: 'https://example.com/c', title: 'C' },
     ]);
-    mockGroq();
+    mockGroq(['All of them. [1][2]', '[3][4][5]']);
 
     const { events } = await chat(testEnv, request(site.publicKey, 'alpha plan'));
     const done = events.at(-1);
@@ -358,7 +370,7 @@ describe('POST /v1/chat', () => {
     await seedChunks(testEnv, siteB.siteId, [
       { content: 'Site B sells garden tools.', url: 'https://example.com/tools', title: 'Tools' },
     ]);
-    const groq = mockGroq(['We sell garden tools.']);
+    const groq = mockGroq(['We sell garden tools. [1]']);
 
     // The question is site A's chunk verbatim, so A's vector is the best match overall.
     const { events } = await chat(testEnv, request(siteB.publicKey, secret));

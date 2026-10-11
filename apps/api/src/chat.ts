@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import { LIMITS } from '@sitebot/shared';
 import type { ChatEvent, ChatRequest, SourceLink, WidgetConfig } from '@sitebot/shared';
+import { createCitationFilter } from './citations';
 import { parseJson, siteByPublicKey, type ChunkRow, type SiteRow } from './db';
 import type { Env } from './env';
 import { embedTexts } from './ingest/embed';
@@ -37,6 +38,7 @@ export function buildSystemPrompt(site: SiteRow): string {
     '- Reply in plain text only. No markdown.',
     '- Be brief: a few sentences.',
     "- Reply in the visitor's language.",
+    '- End your answer with the numbers of the context passages you used, in square brackets, like [1] or [1][3]. If the context did not contain the answer, add no numbers.',
   ];
   const extra = site.instructions.trim();
   if (extra !== '') {
@@ -268,12 +270,18 @@ publicApi.post('/chat', async (c) => {
           ),
           { role: 'user', content: buildUserTurn(chunks, message) },
         ];
+        // Links are shown only for passages the model says it used, not for everything retrieved.
+        const citations = createCitationFilter(chunks.length);
+        const show = async (text: string): Promise<boolean> => {
+          if (text === '') return true;
+          answer += text;
+          return send({ type: 'delta', text });
+        };
         try {
           const model = site.model ?? env.DEFAULT_MODEL;
           for await (const event of streamGroq(env.GROQ_API_KEY, model, messages, upstream.signal)) {
             if (event.type === 'delta') {
-              answer += event.text;
-              if (!(await send({ type: 'delta', text: event.text }))) return;
+              if (!(await show(citations.push(event.text)))) return;
             } else {
               usage = event.usage;
             }
@@ -289,12 +297,13 @@ publicApi.post('/chat', async (c) => {
           }
           return;
         }
+        if (!(await show(citations.end()))) return;
         if (answer === '') {
           console.error('chat: upstream returned no text');
           await send({ type: 'error', message: GENERIC_ERROR });
           return;
         }
-        sources = sourceLinks(chunks);
+        sources = sourceLinks(chunks.filter((_, i) => citations.cited.has(i + 1)));
       }
 
       await send({ type: 'done', sources });

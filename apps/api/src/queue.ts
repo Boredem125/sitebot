@@ -5,6 +5,7 @@ import { processQa, processUpload } from './ingest/upload';
 
 /** Deliveries per message: the first plus `max_retries` (3) from wrangler.jsonc. */
 const MAX_ATTEMPTS = 4;
+const RETRY_DELAY_SEC = 30;
 
 function runJob(env: Env, job: IngestJob): Promise<void> {
   switch (job.type) {
@@ -42,7 +43,8 @@ export async function handleQueue(
       const reason = err instanceof Error ? err.message.slice(0, 200) : 'unknown error';
       console.error('ingest job failed', { ...ref, attempt: message.attempts, reason });
       if (message.attempts < MAX_ATTEMPTS) {
-        message.retry();
+        // Back off: an outage of Workers AI or Vectorize usually outlasts an instant retry.
+        message.retry({ delaySeconds: RETRY_DELAY_SEC * message.attempts });
         continue;
       }
       try {
