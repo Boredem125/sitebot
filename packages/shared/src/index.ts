@@ -54,6 +54,7 @@ export interface ApiError {
 }
 
 // ---------- Dashboard API (/api, session cookie) ----------
+// Every timestamp (`createdAt`, `updatedAt`) is Unix epoch milliseconds.
 //
 // POST   /api/auth/signup                  AuthRequest            -> { user: User }
 // POST   /api/auth/login                   AuthRequest            -> { user: User }

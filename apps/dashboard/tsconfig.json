@@ -1,0 +1,11 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "jsx": "react-jsx",
+    // Only vite/client is global. The Pages Functions import their Workers types
+    // explicitly, because the ambient Workers globals clash with the DOM lib.
+    "types": ["vite/client"]
+  },
+  "include": ["src", "functions"]
+}

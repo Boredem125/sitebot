@@ -1,0 +1,9 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "sitebot-dashboard",
+  "pages_build_output_dir": "dist",
+  "compatibility_date": "2026-10-01",
+  // functions/api and functions/v1 forward to the API Worker through this binding,
+  // so the dashboard, widget.js, and the API all share one origin.
+  "services": [{ "binding": "API", "service": "sitebot-api" }]
+}
