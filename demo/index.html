@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Northwind Bikes: sitebot demo</title>
+    <style>
+      body {
+        margin: 0;
+        font: 16px/1.6 Georgia, 'Times New Roman', serif;
+        color: #1f2937;
+        background: #faf9f6;
+      }
+      main {
+        max-width: 680px;
+        margin: 0 auto;
+        padding: 48px 20px 120px;
+      }
+      h1 {
+        font-size: 2rem;
+        line-height: 1.2;
+      }
+      .dev-note {
+        margin: 0 0 32px;
+        padding: 12px 16px;
+        border: 1px solid #f59e0b;
+        border-radius: 8px;
+        background: #fffbeb;
+        font: 14px/1.5 system-ui, sans-serif;
+      }
+      code {
+        font-size: 0.9em;
+        background: #f3f4f6;
+        padding: 1px 4px;
+        border-radius: 4px;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <div class="dev-note">
+        <strong>Developer note.</strong> This page is a test host for the sitebot widget. In
+        <code>demo/index.html</code>, replace <code>pk_REPLACE_ME</code> with a site's public key
+        from the dashboard, and add <code>localhost</code> to that site's allowed domains. Build the
+        widget (<code>npm run build -w @sitebot/widget</code>), start the API on
+        <code>http://localhost:8787</code>, then open this page with <code>npm run demo</code>
+        (http://localhost:4000), not as a file: the API checks the <code>Origin</code> header.
+      </div>
+
+      <h1>Northwind Bikes</h1>
+      <p>
+        We have been building and repairing commuter bikes in a small workshop since 2009. Every
+        frame is assembled to order, tuned by hand, and test-ridden before it leaves the shop.
+      </p>
+      <p>
+        Orders ship within five working days. Each bike comes with a two-year frame warranty and a
+        free first service at any of our partner workshops. Questions about sizing, delivery, or
+        repairs? Ask the assistant in the corner of this page.
+      </p>
+    </main>
+
+    <script src="/widget.js" data-site="pk_REPLACE_ME" data-api="http://localhost:8787" async></script>
+  </body>
+</html>
