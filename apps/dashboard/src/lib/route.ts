@@ -1,6 +1,14 @@
 import { useEffect, useState } from 'react';
 
-export const SITE_TABS = ['install', 'content', 'appearance', 'conversations', 'usage'] as const;
+export const SITE_TABS = [
+  'install',
+  'content',
+  'appearance',
+  'conversations',
+  'questions',
+  'usage',
+  'settings',
+] as const;
 export type SiteTab = (typeof SITE_TABS)[number];
 
 export type Route =

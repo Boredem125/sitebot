@@ -9,6 +9,8 @@ import { AppearanceTab } from '../tabs/AppearanceTab';
 import { ContentTab } from '../tabs/ContentTab';
 import { ConversationsTab } from '../tabs/ConversationsTab';
 import { InstallTab } from '../tabs/InstallTab';
+import { QuestionsTab } from '../tabs/QuestionsTab';
+import { SettingsTab } from '../tabs/SettingsTab';
 import { UsageTab } from '../tabs/UsageTab';
 
 const TAB_LABELS: Record<SiteTab, string> = {
@@ -16,7 +18,9 @@ const TAB_LABELS: Record<SiteTab, string> = {
   content: 'Content',
   appearance: 'Appearance',
   conversations: 'Conversations',
+  questions: 'Questions',
   usage: 'Usage',
+  settings: 'Settings',
 };
 
 export function SitePage({ siteId, tab }: { siteId: string; tab: SiteTab }) {
@@ -70,7 +74,9 @@ export function SitePage({ siteId, tab }: { siteId: string; tab: SiteTab }) {
       {tab === 'content' && <ContentTab siteId={site.id} />}
       {tab === 'appearance' && <AppearanceTab site={site} onSaved={onSiteChange} />}
       {tab === 'conversations' && <ConversationsTab siteId={site.id} />}
+      {tab === 'questions' && <QuestionsTab site={site} />}
       {tab === 'usage' && <UsageTab siteId={site.id} />}
+      {tab === 'settings' && <SettingsTab site={site} />}
     </div>
   );
 }

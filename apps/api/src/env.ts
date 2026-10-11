@@ -14,7 +14,17 @@ export interface Env {
   BROWSER?: BrowserRun;
   /** Secret. Never log it or return it to a client. */
   GROQ_API_KEY: string;
+  /** Secret, optional. More Groq keys, comma-separated, tried when the first is rate limited. */
+  GROQ_API_KEYS?: string;
   DEFAULT_MODEL: string;
+  /** Optional. Model to fall back to when every key is rate limited on the site's model. */
+  FALLBACK_MODEL?: string;
+  /** Secret, optional. Resend API key for password reset mail. Without it no mail is sent. */
+  RESEND_API_KEY?: string;
+  /** Optional. From address for mail, e.g. `Sitebot <no-reply@example.com>`. */
+  MAIL_FROM?: string;
+  /** Optional. Public URL of the dashboard, used to build links in mail. */
+  APP_URL?: string;
   /** Comma-separated origins allowed to call /api, e.g. `https://app.example.com`. */
   DASHBOARD_ORIGIN: string;
 }

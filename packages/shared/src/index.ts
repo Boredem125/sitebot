@@ -1,4 +1,7 @@
 // Types shared by the API Worker, the dashboard, and the widget.
+export * from './account';
+export * from './insights';
+
 // Types are erased at build time; `LIMITS` is the only runtime export.
 
 // ---------- Public widget API (/v1) ----------
@@ -18,6 +21,10 @@ export interface WidgetConfig {
   font?: string;
   /** Square logo shown on the launcher and in the header. Absent = chat icon. */
   logoUrl?: string;
+  /** Starter questions shown as buttons under the greeting. Absent or empty = none. */
+  suggestedQuestions?: string[];
+  /** True when the widget may ask for an email after an answer the bot could not give. */
+  leadCapture?: boolean;
 }
 
 /** POST /v1/chat request body (JSON). */
@@ -35,13 +42,14 @@ export interface SourceLink {
 /**
  * POST /v1/chat responds 200 with `text/event-stream`. Each event is one line
  * `data: <JSON ChatEvent>` followed by a blank line. Order: `meta`, then zero or
- * more `delta`, then exactly one of `done` | `busy` | `error`.
+ * more `delta`, then exactly one of `done` | `busy` | `error`. `done.offerContact` is true
+ * when the bot had no grounded answer and the site collects contact details (see /v1/lead).
  * Failures before the stream starts are JSON `ApiError` with a 4xx status.
  */
 export type ChatEvent =
   | { type: 'meta'; conversationId: string }
   | { type: 'delta'; text: string }
-  | { type: 'done'; sources: SourceLink[] }
+  | { type: 'done'; sources: SourceLink[]; offerContact?: boolean }
   | { type: 'busy'; retryAfter: number }
   | { type: 'error'; message: string };
 
@@ -105,6 +113,10 @@ export interface Site {
   textColor: string | null;
   font: string | null;
   logoUrl: string | null;
+  /** Up to 3 starter questions. Generated from the content when empty; the owner can edit them. */
+  suggestedQuestions: string[];
+  /** Ask the visitor for an email when the bot cannot answer. Off unless the owner turns it on. */
+  leadCapture: boolean;
   /** Extra instructions the owner adds to the bot's system prompt. */
   instructions: string;
   monthlyCap: number;
@@ -139,6 +151,8 @@ export type UpdateSiteRequest = Partial<
     | 'textColor'
     | 'font'
     | 'logoUrl'
+    | 'suggestedQuestions'
+    | 'leadCapture'
   >
 >;
 

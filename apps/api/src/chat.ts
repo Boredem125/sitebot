@@ -6,7 +6,7 @@ import { parseJson, siteByPublicKey, type ChunkRow, type SiteRow } from './db';
 import type { Env } from './env';
 import { embedTexts } from './ingest/embed';
 import { isOriginAllowed, monthlyUsage, rateLimit, recordUsageStatement, type TokenUsage } from './limits';
-import { GroqError, streamGroq, type GroqMessage } from './llm/groq';
+import { GroqError, streamAnswer, type GroqMessage } from './llm/groq';
 import { apiError, clientIp, newId } from './util';
 
 const TOP_K = 5;
@@ -283,7 +283,7 @@ publicApi.post('/chat', async (c) => {
         };
         try {
           const model = site.model ?? env.DEFAULT_MODEL;
-          for await (const event of streamGroq(env.GROQ_API_KEY, model, messages, upstream.signal)) {
+          for await (const event of streamAnswer(env, model, messages, upstream.signal)) {
             if (event.type === 'delta') {
               if (!(await show(citations.push(event.text)))) return;
             } else {

@@ -18,6 +18,8 @@ export interface SiteRow {
   font: string | null;
   logo_url: string | null;
   brand_locked: number;
+  suggested_questions: string;
+  lead_capture: number;
 }
 
 export interface SourceRow {
@@ -69,6 +71,8 @@ export function toSite(row: SiteRow): Site {
     textColor: row.text_color,
     font: row.font,
     logoUrl: row.logo_url,
+    suggestedQuestions: parseJson<string[]>(row.suggested_questions, []),
+    leadCapture: row.lead_capture === 1,
     instructions: row.instructions,
     monthlyCap: row.monthly_cap,
     createdAt: row.created_at,

@@ -1,3 +1,4 @@
+import type { Env } from '../env';
 import type { TokenUsage } from '../limits';
 
 const GROQ_URL = 'https://api.groq.com/openai/v1/chat/completions';
@@ -95,6 +96,19 @@ function parseRetryAfter(header: string | null): number | null {
   if (header === null || header.trim() === '') return null;
   const seconds = Number(header);
   return Number.isFinite(seconds) && seconds >= 0 ? Math.ceil(seconds) : null;
+}
+
+/**
+ * Streams an answer for the chat endpoint. This is the one place that decides which key
+ * and which model serve a request.
+ */
+export function streamAnswer(
+  env: Pick<Env, 'GROQ_API_KEY' | 'GROQ_API_KEYS' | 'FALLBACK_MODEL'>,
+  model: string,
+  messages: GroqMessage[],
+  signal?: AbortSignal,
+): AsyncGenerator<GroqEvent> {
+  return streamGroq(env.GROQ_API_KEY, model, messages, signal);
 }
 
 /** Streams one chat completion: text deltas, then exactly one `end` event. */

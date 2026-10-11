@@ -75,7 +75,7 @@ async function toError(res: Response): Promise<ApiRequestError> {
   return new ApiRequestError(res.status, 'unknown', `Request failed (${res.status})`, headerRetry);
 }
 
-interface RequestOptions {
+export interface RequestOptions {
   method?: 'GET' | 'POST' | 'PATCH';
   json?: unknown;
   form?: FormData;
@@ -84,7 +84,7 @@ interface RequestOptions {
   signal?: AbortSignal;
 }
 
-async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
+export async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
   const { method = 'GET', json, form, expectsSession = true, signal } = opts;
   const init: RequestInit = { method, credentials: 'same-origin', signal };
   if (json !== undefined) {
@@ -115,7 +115,7 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
   }
 }
 
-const seg = (id: string): string => encodeURIComponent(id);
+export const seg = (id: string): string => encodeURIComponent(id);
 
 // ---------- auth ----------
 

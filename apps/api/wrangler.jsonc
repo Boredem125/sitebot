@@ -7,6 +7,10 @@
   "observability": { "enabled": true },
   "vars": {
     "DEFAULT_MODEL": "openai/gpt-oss-120b",
+    // Used when every Groq key is rate limited on the model above. Limits are per model.
+    "FALLBACK_MODEL": "openai/gpt-oss-20b",
+    // Public URL of the dashboard, for links in password reset mail.
+    "APP_URL": "https://sitebot-dashboard.pages.dev",
     // Comma-separated origins allowed to call /api.
     "DASHBOARD_ORIGIN": "https://sitebot-dashboard.pages.dev,http://localhost:5173"
   },

@@ -1,5 +1,6 @@
 import { Hono, type Context } from 'hono';
 import {
+  INSIGHT_LIMITS,
   LIMITS,
   type ApiError,
   type ConversationSummary,
@@ -23,7 +24,9 @@ import type { Env, IngestJob } from './env';
 import { applyBrand, detectBrand, isEmptyBrand } from './ingest/brand';
 import { fetchText } from './ingest/crawl';
 import { bareHost, isSafeUrl, normalizeUrl } from './ingest/url';
+import { insights } from './insights';
 import { monthlyUsage, rateLimit } from './limits';
+import { resetRoutes } from './reset';
 import { apiError, clientIp, newId, randomToken } from './util';
 
 const MAX_SITES_PER_USER = 10;
@@ -204,8 +207,12 @@ api.post('/auth/login', async (c) => {
   return c.json({ user });
 });
 
+api.route('/', resetRoutes);
+
 // Everything registered below this line needs a session.
 api.use('*', requireUser);
+
+api.route('/', insights);
 
 api.post('/auth/logout', async (c) => {
   await destroySession(c);
@@ -274,8 +281,8 @@ api.patch('/sites/:id', async (c) => {
 
   // Only the columns named here can change: monthly_cap, model and public_key are not editable.
   const sets: string[] = [];
-  const values: (string | null)[] = [];
-  const set = (column: string, value: string): void => {
+  const values: (string | number | null)[] = [];
+  const set = (column: string, value: string | number): void => {
     values.push(value);
     sets.push(`${column} = ?${values.length}`);
   };
@@ -313,6 +320,25 @@ api.patch('/sites/:id', async (c) => {
       return invalid(c, `Domains must be 1 to ${MAX_DOMAINS} plain hostnames such as example.com`);
     }
     set('domains', JSON.stringify(domains));
+  }
+
+  if (body.suggestedQuestions !== undefined) {
+    const list = body.suggestedQuestions;
+    if (!Array.isArray(list) || list.length > INSIGHT_LIMITS.suggestedQuestions) {
+      return invalid(c, `Add at most ${INSIGHT_LIMITS.suggestedQuestions} suggested questions`);
+    }
+    const questions: string[] = [];
+    for (const entry of list) {
+      if (typeof entry !== 'string' || entry.trim().length > INSIGHT_LIMITS.suggestedQuestionMaxChars) {
+        return invalid(c, `Each suggested question can be up to ${INSIGHT_LIMITS.suggestedQuestionMaxChars} characters`);
+      }
+      if (entry.trim() !== '') questions.push(entry.trim());
+    }
+    set('suggested_questions', JSON.stringify(questions));
+  }
+  if (body.leadCapture !== undefined) {
+    if (typeof body.leadCapture !== 'boolean') return invalid(c, 'leadCapture must be true or false');
+    set('lead_capture', body.leadCapture ? 1 : 0);
   }
 
   // Look fields are nullable: null (or '') goes back to the widget default.
