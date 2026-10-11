@@ -1,5 +1,5 @@
 // Types shared by the API Worker, the dashboard, and the widget.
-// Import with `import type` only: this package ships no runtime code.
+// Types are erased at build time; `LIMITS` is the only runtime export.
 
 // ---------- Public widget API (/v1) ----------
 

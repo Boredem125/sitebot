@@ -70,7 +70,7 @@ visitor browser                      site owner
 1. Look up site by public key; reject if `Origin` is not in the site's domain allowlist.
 2. Rate limit per IP and per site; check the site's monthly message cap.
 3. Embed the question, query Vectorize (top 5) in the site's namespace, load chunk text from D1.
-4. `src/llm/groq.ts` posts to Groq with `stream: true`, `stream_options: { include_usage: true }`, `model` from `sites.model`, `reasoning_effort: "low"`, `include_reasoning: false`, `max_completion_tokens: 400`. Messages: stable system prompt, last few turns of history, then the user turn with retrieved chunks inside `<context>` tags.
+4. `src/llm/groq.ts` posts to Groq with `stream: true`, `stream_options: { include_usage: true }`, `model` from `sites.model`, `reasoning_effort: "low"`, `include_reasoning: false`, `max_completion_tokens: 800` (reasoning tokens count against the cap). Messages: stable system prompt, last few turns of history, then the user turn with retrieved chunks inside `<context>` tags.
 5. Parse Groq's SSE, forward `delta.content` to the widget as our own SSE events. On the final chunk read `finish_reason` and `usage`, then save messages and token usage to D1 via `ctx.waitUntil`.
 6. Upstream errors: 429 becomes a `busy` event carrying `retry-after`; 401 and 5xx become a generic `error` event and are logged. The key and Groq's raw error body never reach the browser.
 
