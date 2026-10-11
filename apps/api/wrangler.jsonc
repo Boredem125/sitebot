@@ -32,8 +32,20 @@
   "browser": { "binding": "BROWSER", "remote": true },
   "queues": {
     "producers": [{ "binding": "INGEST_QUEUE", "queue": "sitebot-ingest" }],
-    // One consumer at a time: page renders are rate limited, and pacing only works in sequence.
-    "consumers": [{ "queue": "sitebot-ingest", "max_batch_size": 5, "max_retries": 3, "max_concurrency": 1 }]
+    "consumers": [
+      // One consumer at a time: page renders are rate limited, and pacing only works in sequence.
+      // One job per invocation: parsing several large pages in one go can exceed the CPU limit,
+      // which fails the whole batch without our code getting a say.
+      {
+        "queue": "sitebot-ingest",
+        "max_batch_size": 1,
+        "max_retries": 3,
+        "max_concurrency": 1,
+        "dead_letter_queue": "sitebot-ingest-dlq"
+      },
+      // Jobs that ran out of retries. The consumer only records the failure (see queue.ts).
+      { "queue": "sitebot-ingest-dlq", "max_batch_size": 10, "max_retries": 3 }
+    ]
   },
   // Weekly re-crawl: Mondays 03:00 UTC.
   "triggers": { "crons": ["0 3 * * 1"] }

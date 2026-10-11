@@ -6,6 +6,7 @@ import { processQa, processUpload } from './ingest/upload';
 /** Deliveries per message: the first plus `max_retries` (3) from wrangler.jsonc. */
 const MAX_ATTEMPTS = 4;
 const RETRY_DELAY_SEC = 30;
+export const DEAD_LETTER_QUEUE = 'sitebot-ingest-dlq';
 
 function runJob(env: Env, job: IngestJob): Promise<void> {
   switch (job.type) {
@@ -26,11 +27,32 @@ function giveUp(env: Env, job: IngestJob): Promise<void> {
   return setSourceStatus(env, job.siteId, job.sourceId, 'error', 'Processing failed, try again');
 }
 
+/**
+ * Jobs Cloudflare gave up delivering land here. That happens when a whole invocation dies
+ * (CPU limit, an exception outside our try/catch, a deploy mid-batch) often enough to use up
+ * the retries: our own last-attempt handling never ran, so nothing recorded the failure and
+ * a crawl would wait on its 'pending' pages forever. Recording it lets the crawl finish.
+ */
+async function handleDeadLetters(batch: MessageBatch<IngestJob>, env: Env): Promise<void> {
+  for (const message of batch.messages) {
+    const job = message.body;
+    try {
+      console.error('ingest job dead-lettered', { type: job?.type, siteId: job?.siteId, sourceId: job?.sourceId });
+      await giveUp(env, job);
+      message.ack();
+    } catch {
+      message.retry({ delaySeconds: RETRY_DELAY_SEC });
+    }
+  }
+}
+
 export async function handleQueue(
   batch: MessageBatch<IngestJob>,
   env: Env,
   _ctx: ExecutionContext,
 ): Promise<void> {
+  if (batch.queue === DEAD_LETTER_QUEUE) return handleDeadLetters(batch, env);
+
   // One at a time: page jobs of the same crawl share a frontier and its page cap.
   for (const message of batch.messages) {
     const job = message.body;

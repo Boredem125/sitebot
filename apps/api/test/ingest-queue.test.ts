@@ -9,7 +9,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { SourceRow } from '../src/db';
 import type { IngestJob } from '../src/env';
 import { NO_PAGES_ERROR } from '../src/ingest/crawl';
-import { handleQueue, handleScheduled } from '../src/queue';
+import { DEAD_LETTER_QUEUE, handleQueue, handleScheduled } from '../src/queue';
 import { newId } from '../src/util';
 import { makeEnv, seedSite, type TestEnv } from './helpers';
 
@@ -158,6 +158,66 @@ describe('handleQueue', () => {
     const page = await env.DB.prepare('SELECT status FROM crawl_pages WHERE source_id = ?1').bind(crawlId).first();
     expect(page).toEqual({ status: 'error' });
     expect(await sourceRow(crawlId)).toMatchObject({ status: 'error', error: NO_PAGES_ERROR });
+  });
+
+  it('records dead-lettered page jobs so the crawl can finish', async () => {
+    const t = makeEnv();
+    const { siteId } = await seedSite(env.DB);
+    const sourceId = newId();
+    const now = Date.now();
+    await env.DB.batch([
+      env.DB.prepare(
+        `INSERT INTO sources (id, site_id, kind, label, status, meta, created_at, updated_at)
+         VALUES (?1, ?2, 'crawl', 'https://example.com/', 'processing', '{"mode":"bfs"}', ?3, ?3)`,
+      ).bind(sourceId, siteId, now),
+      env.DB.prepare("INSERT INTO crawl_pages (source_id, url, status) VALUES (?1, 'https://example.com/', 'done')").bind(sourceId),
+      env.DB.prepare("INSERT INTO crawl_pages (source_id, url, status) VALUES (?1, 'https://example.com/a', 'pending')").bind(sourceId),
+      env.DB.prepare("INSERT INTO crawl_pages (source_id, url, status) VALUES (?1, 'https://example.com/b', 'pending')").bind(sourceId),
+    ]);
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+
+    // These never reached our handler's last attempt: the runtime dropped them after its retries.
+    const batch = createMessageBatch<IngestJob>(DEAD_LETTER_QUEUE, [
+      { id: 'd0', timestamp: new Date(), attempts: 1, body: { type: 'page', siteId, sourceId, url: 'https://example.com/a' } },
+      { id: 'd1', timestamp: new Date(), attempts: 1, body: { type: 'page', siteId, sourceId, url: 'https://example.com/b' } },
+    ]);
+    const ctx = createExecutionContext();
+    await handleQueue(batch, t.env, ctx);
+    const result = await getQueueResult(batch, ctx);
+
+    expect(result.explicitAcks).toEqual(['d0', 'd1']);
+    // Nothing is fetched or indexed again: the job is only written off.
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(t.ai.calls).toHaveLength(0);
+    const { results } = await env.DB.prepare('SELECT url, status FROM crawl_pages WHERE source_id = ?1 ORDER BY url')
+      .bind(sourceId)
+      .all();
+    expect(results).toEqual([
+      { url: 'https://example.com/', status: 'done' },
+      { url: 'https://example.com/a', status: 'error' },
+      { url: 'https://example.com/b', status: 'error' },
+    ]);
+    expect(await sourceRow(sourceId)).toMatchObject({ status: 'ready', pages: 1 });
+  });
+
+  it('marks a dead-lettered upload as failed', async () => {
+    const t = makeEnv();
+    const { siteId } = await seedSite(env.DB);
+    const sourceId = newId();
+    await env.DB.prepare(
+      `INSERT INTO sources (id, site_id, kind, label, status, created_at, updated_at)
+       VALUES (?1, ?2, 'upload', 'big.pdf', 'processing', 1, 1)`,
+    )
+      .bind(sourceId, siteId)
+      .run();
+
+    const batch = createMessageBatch<IngestJob>(DEAD_LETTER_QUEUE, [
+      { id: 'd0', timestamp: new Date(), attempts: 1, body: { type: 'upload', siteId, sourceId } },
+    ]);
+    const ctx = createExecutionContext();
+    await handleQueue(batch, t.env, ctx);
+    await getQueueResult(batch, ctx);
+    expect(await sourceRow(sourceId)).toMatchObject({ status: 'error', error: 'Processing failed, try again' });
   });
 
   it('acks jobs for sources that no longer exist', async () => {
