@@ -1,0 +1,13 @@
+{
+  "name": "sitebot",
+  "private": true,
+  "workspaces": ["apps/*", "packages/*"],
+  "scripts": {
+    "dev:api": "npm run dev -w @sitebot/api",
+    "dev:dashboard": "npm run dev -w @sitebot/dashboard",
+    "build": "npm run build -w @sitebot/widget && npm run build -w @sitebot/dashboard",
+    "demo": "node demo/serve.mjs",
+    "test": "npm run test --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present"
+  }
+}

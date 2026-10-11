@@ -1,0 +1,33 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "sitebot-api",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": { "enabled": true },
+  "vars": {
+    "DEFAULT_MODEL": "openai/gpt-oss-120b",
+    // Comma-separated origins allowed to call /api. Add the Pages URL before deploying.
+    "DASHBOARD_ORIGIN": "http://localhost:5173"
+  },
+  // Secret, not listed here: GROQ_API_KEY (`wrangler secret put GROQ_API_KEY`, or .dev.vars locally).
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "sitebot",
+      // Replace with the id printed by `wrangler d1 create sitebot`.
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "migrations"
+    }
+  ],
+  // `wrangler vectorize create sitebot-chunks --dimensions=1024 --metric=cosine`
+  "vectorize": [{ "binding": "VECTORIZE", "index_name": "sitebot-chunks" }],
+  "ai": { "binding": "AI" },
+  "r2_buckets": [{ "binding": "UPLOADS", "bucket_name": "sitebot-uploads" }],
+  "queues": {
+    "producers": [{ "binding": "INGEST_QUEUE", "queue": "sitebot-ingest" }],
+    "consumers": [{ "queue": "sitebot-ingest", "max_batch_size": 5, "max_retries": 3 }]
+  },
+  // Weekly re-crawl: Mondays 03:00 UTC.
+  "triggers": { "crons": ["0 3 * * 1"] }
+}

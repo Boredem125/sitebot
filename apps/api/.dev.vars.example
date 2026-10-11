@@ -1,0 +1,2 @@
+# Copy to .dev.vars (git-ignored) and fill in. Used by `wrangler dev` only.
+GROQ_API_KEY=
