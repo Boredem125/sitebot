@@ -8,6 +8,7 @@ import { env } from 'cloudflare:workers';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { SourceRow } from '../src/db';
 import type { IngestJob } from '../src/env';
+import { NO_PAGES_ERROR } from '../src/ingest/crawl';
 import { handleQueue, handleScheduled } from '../src/queue';
 import { newId } from '../src/util';
 import { makeEnv, seedSite, type TestEnv } from './helpers';
@@ -153,7 +154,7 @@ describe('handleQueue', () => {
     expect(await sourceRow(qaId)).toMatchObject({ status: 'error', error: 'Processing failed, try again' });
     const page = await env.DB.prepare('SELECT status FROM crawl_pages WHERE source_id = ?1').bind(crawlId).first();
     expect(page).toEqual({ status: 'error' });
-    expect(await sourceRow(crawlId)).toMatchObject({ status: 'error', error: 'No pages could be read' });
+    expect(await sourceRow(crawlId)).toMatchObject({ status: 'error', error: NO_PAGES_ERROR });
   });
 
   it('acks jobs for sources that no longer exist', async () => {
@@ -179,7 +180,7 @@ describe('handleScheduled', () => {
       kind: 'crawl',
       label: 'https://b.example.com/',
       status: 'error',
-      error: 'No pages could be read',
+      error: NO_PAGES_ERROR,
     });
     const running = await seedSource(a.siteId, { kind: 'crawl', label: 'https://c.example.com/', status: 'processing' });
     const waiting = await seedSource(a.siteId, { kind: 'crawl', label: 'https://d.example.com/', status: 'pending' });

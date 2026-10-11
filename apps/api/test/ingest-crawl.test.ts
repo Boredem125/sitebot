@@ -2,7 +2,7 @@ import { env } from 'cloudflare:workers';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { SourceRow } from '../src/db';
 import { CRAWLER_USER_AGENT, type IngestJob } from '../src/env';
-import { crawlPage, startCrawl } from '../src/ingest/crawl';
+import { NO_PAGES_ERROR, crawlPage, startCrawl } from '../src/ingest/crawl';
 import { newId } from '../src/util';
 import { makeEnv, seedSite, type TestEnv } from './helpers';
 
@@ -427,7 +427,7 @@ describe('crawl safety', () => {
     expect(Object.keys(await pageStatuses(ids.sourceId))).toHaveLength(6);
     expect(await sourceRow(ids.sourceId)).toMatchObject({
       status: 'error',
-      error: 'No pages could be read',
+      error: NO_PAGES_ERROR,
       pages: 0,
     });
     expect(await chunks(ids.siteId, ids.sourceId)).toEqual([]);
@@ -437,15 +437,37 @@ describe('crawl safety', () => {
     expect(pulled).toBeLessThan(15);
   });
 
-  it('counts a page with no text as done', async () => {
+  it('does not count a page with no text as read', async () => {
     const t = makeEnv();
     const ids = await seedCrawl('https://example.com/');
     mockFetch({ 'https://example.com/': html('', '<script>app()</script>') });
 
     await crawl(t, ids);
 
-    expect(await sourceRow(ids.sourceId)).toMatchObject({ status: 'ready', pages: 1 });
+    // Reporting "ready, 1 page" here would hide that the bot has nothing to answer from.
+    expect(await sourceRow(ids.sourceId)).toMatchObject({ status: 'error', error: NO_PAGES_ERROR, pages: 0 });
     expect(await chunks(ids.siteId, ids.sourceId)).toEqual([]);
+  });
+
+  it('indexes the meta description of a page that renders in the browser', async () => {
+    const t = makeEnv();
+    const ids = await seedCrawl('https://example.com/');
+    mockFetch({
+      'https://example.com/': () =>
+        new Response(
+          '<html><head><title>Acme App</title>' +
+            '<meta name="description" content="Acme tracks parcels in real time &amp; sends alerts." />' +
+            '</head><body><div id="root"></div><script type="module" src="/app.js"></script></body></html>',
+          { headers: { 'content-type': 'text/html' } },
+        ),
+    });
+
+    await crawl(t, ids);
+
+    expect(await sourceRow(ids.sourceId)).toMatchObject({ status: 'ready', pages: 1 });
+    expect(await chunks(ids.siteId, ids.sourceId)).toMatchObject([
+      { title: 'Acme App', content: 'Acme tracks parcels in real time & sends alerts.' },
+    ]);
   });
 
   it('ignores duplicate deliveries, unknown pages, and jobs for another site', async () => {
@@ -537,7 +559,7 @@ describe('re-crawl', () => {
     mockFetch({ 'https://example.com/': () => new Response('down', { status: 503 }) });
     await crawl(t, ids);
 
-    expect(await sourceRow(ids.sourceId)).toMatchObject({ status: 'error', error: 'No pages could be read', pages: 0 });
+    expect(await sourceRow(ids.sourceId)).toMatchObject({ status: 'error', error: NO_PAGES_ERROR, pages: 0 });
     expect(await chunks(ids.siteId, ids.sourceId)).toHaveLength(1);
     expect(t.vectorize.vectors.size).toBe(1);
   });

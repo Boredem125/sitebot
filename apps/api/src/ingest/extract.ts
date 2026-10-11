@@ -39,6 +39,7 @@ export async function extractHtml(
   let inTitle = false;
   let titleSeen = false;
   let title = '';
+  let description = '';
   let body = '';
   // Raw text of the current text node. HTMLRewriter delivers it in arbitrary pieces that can
   // cut an entity in half, so decoding waits until the node is complete.
@@ -67,6 +68,15 @@ export async function extractHtml(
           // Attribute values arrive raw too: `?a=1&amp;b=2` must become `?a=1&b=2`.
           const url = href === null ? null : normalizeUrl(decodeEntities(href).trim(), baseUrl);
           if (url) links.add(url);
+          return;
+        }
+        if (tag === 'meta') {
+          // Often the only server-rendered prose on a site that renders in the browser.
+          const name = (el.getAttribute('name') ?? el.getAttribute('property') ?? '').toLowerCase();
+          const content = el.getAttribute('content');
+          if (content && (name === 'description' || (name === 'og:description' && description === ''))) {
+            description = decodeEntities(content).replace(/\s+/g, ' ').trim();
+          }
           return;
         }
         if (SKIP_TAGS.has(tag)) {
@@ -120,10 +130,14 @@ export async function extractHtml(
   await rewriter.transform(res).arrayBuffer();
   flush();
 
-  const text = body
+  const visible = body
     .split('\n')
     .map((line) => line.replace(/\s+/g, ' ').trim())
     .filter((line) => line !== '')
     .join('\n');
+  const text =
+    description !== '' && !visible.includes(description)
+      ? [description, visible].filter((part) => part !== '').join('\n')
+      : visible;
   return { title: title.replace(/\s+/g, ' ').trim(), text, links: [...links] };
 }

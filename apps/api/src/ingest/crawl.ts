@@ -15,6 +15,9 @@ const ROBOTS_AGENT = CRAWLER_USER_AGENT.replace(/\/.*$/, '').toLowerCase();
 const NON_HTML_PATH =
   /\.(pdf|jpe?g|png|gif|webp|svg|ico|bmp|tiff?|avif|css|js|mjs|json|xml|rss|atom|txt|csv|zip|gz|tgz|tar|rar|7z|mp4|mp3|m4a|wav|ogg|webm|mov|avi|woff2?|ttf|otf|eot|docx?|xlsx?|pptx?|exe|dmg|apk|wasm|map)$/i;
 
+export const NO_PAGES_ERROR =
+  'No readable text found. The site may be down, block crawlers, or need JavaScript to show its content.';
+
 export interface RobotsRules {
   allow: string[];
   disallow: string[];
@@ -321,6 +324,7 @@ export async function crawlPage(env: Env, job: PageJob): Promise<void> {
   };
 
   let page: Awaited<ReturnType<typeof fetchPage>> | null = null;
+  let readable = false;
   if (start) {
     const site = bareHost(start);
     try {
@@ -331,14 +335,22 @@ export async function crawlPage(env: Env, job: PageJob): Promise<void> {
     }
     if (page) {
       // Failures past this point are ours (D1, Vectorize, Workers AI): let them throw and retry.
-      await indexDocument(env, { siteId, sourceId, url: job.url, title: page.title, text: page.text });
+      const outcome = await indexDocument(env, {
+        siteId,
+        sourceId,
+        url: job.url,
+        title: page.title,
+        text: page.text,
+      });
+      // A page with no text (typically one that renders in the browser) is not a page we read.
+      readable = outcome !== 'empty';
       if (meta.mode === 'bfs') await addLinks(env, job, page.links, site, rules);
     }
   }
 
   // New links were inserted above, before this page stops being 'pending': otherwise a
   // concurrent job could see an empty frontier and close the crawl too early.
-  await settlePage(env, job, page ? 'done' : 'error');
+  await settlePage(env, job, readable ? 'done' : 'error');
 }
 
 /**
@@ -430,7 +442,7 @@ async function finishIfIdle(env: Env, siteId: string, sourceId: string): Promise
   if (counts.done === 0) {
     // Nothing could be read (site down, blocked). That says nothing about which pages are
     // stale, so what was indexed before stays searchable.
-    await setSourceStatus(env, siteId, sourceId, 'error', 'No pages could be read', 0);
+    await setSourceStatus(env, siteId, sourceId, 'error', NO_PAGES_ERROR, 0);
     return;
   }
 
