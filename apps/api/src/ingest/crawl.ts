@@ -1,6 +1,7 @@
 import { LIMITS } from '@sitebot/shared';
 import { parseJson } from '../db';
 import { CRAWLER_USER_AGENT, type Env, type IngestJob } from '../env';
+import { applyBrand, detectBrand } from './brand';
 import { decodeEntities, extractHtml } from './extract';
 import { batches, deleteChunks, indexDocument, loadSource, setSourceStatus } from './index-doc';
 import { bareHost, isSafeUrl, normalizeUrl } from './url';
@@ -182,7 +183,7 @@ async function readBody(res: Response, max: number): Promise<{ bytes: Uint8Array
 }
 
 /** Body of a 200 response as text (cut at MAX_BODY_BYTES), or null for any failure. */
-async function fetchText(url: string, site: string | null): Promise<string | null> {
+export async function fetchText(url: string, site: string | null): Promise<string | null> {
   try {
     const { res } = await safeFetch(url, site);
     if (res.status !== 200) {
@@ -199,7 +200,7 @@ async function fetchText(url: string, site: string | null): Promise<string | nul
 async function fetchPage(
   url: string,
   site: string,
-): Promise<{ title: string; text: string; links: string[] }> {
+): Promise<{ title: string; text: string; links: string[]; html: string; finalUrl: string }> {
   const { res, url: finalUrl } = await safeFetch(url, site);
   const contentType = res.headers.get('content-type') ?? '';
   const declared = Number(res.headers.get('content-length') ?? '0');
@@ -211,7 +212,11 @@ async function fetchPage(
   const { bytes, truncated } = await readBody(res, MAX_BODY_BYTES);
   if (truncated) throw new Error('Page too large');
   // Links resolve against where the page really lives, after redirects.
-  return extractHtml(new Response(bytes, { headers: { 'content-type': contentType } }), finalUrl);
+  const extracted = await extractHtml(
+    new Response(bytes, { headers: { 'content-type': contentType } }),
+    finalUrl,
+  );
+  return { ...extracted, html: new TextDecoder().decode(bytes), finalUrl };
 }
 
 /** Normalized URL if it is a page of `site` we may crawl, else null. */
@@ -345,12 +350,32 @@ export async function crawlPage(env: Env, job: PageJob): Promise<void> {
       // A page with no text (typically one that renders in the browser) is not a page we read.
       readable = outcome !== 'empty';
       if (meta.mode === 'bfs') await addLinks(env, job, page.links, site, rules);
+      if (job.url === start || new URL(job.url).pathname === '/') {
+        await refreshBrand(env, siteId, page.html, page.finalUrl);
+      }
     }
   }
 
   // New links were inserted above, before this page stops being 'pending': otherwise a
   // concurrent job could see an empty frontier and close the crawl too early.
   await settlePage(env, job, readable ? 'done' : 'error');
+}
+
+/**
+ * Picks up the site's colours, font, and logo from its home page so the widget matches it.
+ * Purely cosmetic, so a failure here never fails the crawl.
+ */
+async function refreshBrand(env: Env, siteId: string, html: string, pageUrl: string): Promise<void> {
+  try {
+    const site = await env.DB.prepare('SELECT brand_locked FROM sites WHERE id = ?1')
+      .bind(siteId)
+      .first<{ brand_locked: number }>();
+    if (!site || site.brand_locked !== 0) return;
+    const brand = await detectBrand(html, pageUrl, (url) => fetchText(url, null));
+    await applyBrand(env.DB, siteId, brand);
+  } catch {
+    console.error('brand detection failed', { siteId });
+  }
 }
 
 /**

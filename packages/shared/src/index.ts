@@ -7,8 +7,17 @@
 export interface WidgetConfig {
   name: string;
   greeting: string;
+  /** Accent colour, `#rrggbb`. */
   color: string;
   position: 'left' | 'right';
+  /** Panel background, `#rrggbb`. Absent = white. */
+  background?: string;
+  /** Text colour on the panel background, `#rrggbb`. Absent = chosen for contrast. */
+  textColor?: string;
+  /** One font family name, e.g. `Inter`. Used only if the host page already loads it. */
+  font?: string;
+  /** Square logo shown on the launcher and in the header. Absent = chat icon. */
+  logoUrl?: string;
 }
 
 /** POST /v1/chat request body (JSON). */
@@ -64,6 +73,7 @@ export interface ApiError {
 // POST   /api/sites                        CreateSiteRequest      -> { site: Site }   (also starts a crawl of `url`)
 // GET    /api/sites/:id                                           -> { site: Site; usage: SiteUsage }
 // PATCH  /api/sites/:id                    UpdateSiteRequest      -> { site: Site }
+// POST   /api/sites/:id/brand                                     -> { site: Site }   (re-reads colours, font, logo from the site)
 // GET    /api/sites/:id/sources                                   -> { sources: Source[] }
 // POST   /api/sites/:id/sources/crawl      CrawlRequest           -> { source: Source }
 // POST   /api/sites/:id/sources/upload     multipart, field `file`-> { source: Source }
@@ -90,6 +100,11 @@ export interface Site {
   greeting: string;
   color: string;
   position: 'left' | 'right';
+  /** Brand look. Null = widget default. Filled in from the site on the first crawl. */
+  background: string | null;
+  textColor: string | null;
+  font: string | null;
+  logoUrl: string | null;
   /** Extra instructions the owner adds to the bot's system prompt. */
   instructions: string;
   monthlyCap: number;
@@ -112,7 +127,19 @@ export interface CreateSiteRequest {
 }
 
 export type UpdateSiteRequest = Partial<
-  Pick<Site, 'name' | 'domains' | 'greeting' | 'color' | 'position' | 'instructions'>
+  Pick<
+    Site,
+    | 'name'
+    | 'domains'
+    | 'greeting'
+    | 'color'
+    | 'position'
+    | 'instructions'
+    | 'background'
+    | 'textColor'
+    | 'font'
+    | 'logoUrl'
+  >
 >;
 
 export type SourceKind = 'crawl' | 'upload' | 'qa';

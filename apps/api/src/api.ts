@@ -20,6 +20,8 @@ import {
 } from './auth';
 import { parseJson, siteForUser, toSite, toSource, type SiteRow, type SourceRow } from './db';
 import type { Env, IngestJob } from './env';
+import { applyBrand, detectBrand, isEmptyBrand } from './ingest/brand';
+import { fetchText } from './ingest/crawl';
 import { bareHost, isSafeUrl, normalizeUrl } from './ingest/url';
 import { monthlyUsage, rateLimit } from './limits';
 import { apiError, clientIp, newId, randomToken } from './util';
@@ -33,6 +35,7 @@ const BAD_LOGIN = 'Wrong email or password';
 
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const COLOR = /^#[0-9a-fA-F]{6}$/;
+const FONT = /^[A-Za-z0-9][A-Za-z0-9 _-]{0,59}$/;
 const HOST_LABEL = '[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?';
 const HOSTNAME = new RegExp(`^${HOST_LABEL}(?:\\.${HOST_LABEL})+$`);
 
@@ -271,7 +274,7 @@ api.patch('/sites/:id', async (c) => {
 
   // Only the columns named here can change: monthly_cap, model and public_key are not editable.
   const sets: string[] = [];
-  const values: string[] = [];
+  const values: (string | null)[] = [];
   const set = (column: string, value: string): void => {
     values.push(value);
     sets.push(`${column} = ?${values.length}`);
@@ -312,6 +315,32 @@ api.patch('/sites/:id', async (c) => {
     set('domains', JSON.stringify(domains));
   }
 
+  // Look fields are nullable: null (or '') goes back to the widget default.
+  let lookEdited = body.color !== undefined;
+  const setLook = (column: string, value: unknown, check: (text: string) => boolean): boolean => {
+    if (value === undefined) return true;
+    const cleaned = typeof value === 'string' ? value.trim() : value;
+    if (cleaned !== null && cleaned !== '' && (typeof cleaned !== 'string' || !check(cleaned))) return false;
+    values.push(cleaned === '' ? null : cleaned);
+    sets.push(`${column} = ?${values.length}`);
+    lookEdited = true;
+    return true;
+  };
+  if (!setLook('background', body.background, (v) => COLOR.test(v))) {
+    return invalid(c, 'Background must be a hex value like #ffffff');
+  }
+  if (!setLook('text_color', body.textColor, (v) => COLOR.test(v))) {
+    return invalid(c, 'Text colour must be a hex value like #111827');
+  }
+  if (!setLook('font', body.font, (v) => FONT.test(v))) {
+    return invalid(c, 'Font must be one font family name, for example Inter');
+  }
+  if (!setLook('logo_url', body.logoUrl, (v) => v.length <= 500 && v.startsWith('https://') && isSafeUrl(v))) {
+    return invalid(c, 'Logo must be a public https:// image URL');
+  }
+  // A hand-edited look is the owner's choice: later crawls must not overwrite it.
+  if (lookEdited) sets.push('brand_locked = 1');
+
   const userId = c.get('user').id;
   if (sets.length > 0) {
     await c.env.DB.prepare(
@@ -321,6 +350,26 @@ api.patch('/sites/:id', async (c) => {
       .run();
   }
   const updated = await siteForUser(c.env.DB, site.id, userId);
+  return updated ? c.json({ site: toSite(updated) }) : notFound(c);
+});
+
+api.post('/sites/:id/brand', async (c) => {
+  const site = await ownedSite(c);
+  if (!site) return notFound(c);
+  // Each call makes several outbound fetches, so it is limited per user.
+  const limit = await rateLimit(c.env.DB, `brand:${c.get('user').id}`, 10, 3600);
+  if (!limit.ok) {
+    return apiError(c, 429, 'rate_limited', 'Too many attempts. Try again later.', limit.retryAfter);
+  }
+
+  const domain = parseJson<string[]>(site.domains, [])[0];
+  const home = domain ? `https://${domain}/` : '';
+  const html = isSafeUrl(home) ? await fetchText(home, null) : null;
+  const brand = html === null ? {} : await detectBrand(html, home, (url) => fetchText(url, null));
+  if (isEmptyBrand(brand)) return invalid(c, 'Could not read a look from the site. Set the values by hand.');
+
+  await applyBrand(c.env.DB, site.id, brand, true);
+  const updated = await siteForUser(c.env.DB, site.id, c.get('user').id);
   return updated ? c.json({ site: toSite(updated) }) : notFound(c);
 });
 

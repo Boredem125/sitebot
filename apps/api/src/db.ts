@@ -13,6 +13,11 @@ export interface SiteRow {
   model: string | null;
   monthly_cap: number;
   created_at: number;
+  background: string | null;
+  text_color: string | null;
+  font: string | null;
+  logo_url: string | null;
+  brand_locked: number;
 }
 
 export interface SourceRow {
@@ -60,6 +65,10 @@ export function toSite(row: SiteRow): Site {
     greeting: row.greeting,
     color: row.color,
     position: row.position === 'left' ? 'left' : 'right',
+    background: row.background,
+    textColor: row.text_color,
+    font: row.font,
+    logoUrl: row.logo_url,
     instructions: row.instructions,
     monthlyCap: row.monthly_cap,
     createdAt: row.created_at,

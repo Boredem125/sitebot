@@ -522,6 +522,52 @@ describe('sites', () => {
     expect(after.site).toEqual(site);
   });
 
+  it('PATCH sets and clears the brand look, validates it, and locks it against re-detection', async () => {
+    const t = makeEnv();
+    const a = await signUp(t);
+    const site = await createSite(t, a);
+    const patch = (body: unknown) =>
+      call(t, `/sites/${site.id}`, { method: 'PATCH', json: body, cookie: a.cookie });
+    const locked = async () =>
+      (await t.env.DB.prepare('SELECT brand_locked FROM sites WHERE id = ?1').bind(site.id).first<{ brand_locked: number }>())
+        ?.brand_locked;
+
+    expect(site).toMatchObject({ background: null, textColor: null, font: null, logoUrl: null });
+    await patch({ name: 'Renamed' });
+    expect(await locked()).toBe(0);
+
+    const res = await patch({
+      background: '#060A08',
+      textColor: '#ffffff',
+      font: ' Space Grotesk ',
+      logoUrl: 'https://example.com/logo.svg',
+    });
+    expect(res.status).toBe(200);
+    expect((await json<{ site: Site }>(res)).site).toMatchObject({
+      background: '#060A08',
+      textColor: '#ffffff',
+      font: 'Space Grotesk',
+      logoUrl: 'https://example.com/logo.svg',
+    });
+    expect(await locked()).toBe(1);
+
+    const cleared = await json<{ site: Site }>(await patch({ background: null, font: '', logoUrl: null }));
+    expect(cleared.site).toMatchObject({ background: null, textColor: '#ffffff', font: null, logoUrl: null });
+
+    for (const bad of [
+      { background: 'red' },
+      { textColor: '#fff' },
+      { font: 'Inter; } body { display: none' },
+      { font: 'url(https://evil.example/x)' },
+      { logoUrl: 'http://example.com/logo.png' },
+      { logoUrl: 'https://192.168.1.1/logo.png' },
+      { logoUrl: 'javascript:alert(1)' },
+      { logoUrl: 42 },
+    ]) {
+      expect((await patch(bad)).status, JSON.stringify(bad)).toBe(400);
+    }
+  });
+
   it('PATCH ignores monthlyCap, model, publicKey and other unknown fields', async () => {
     const t = makeEnv();
     const a = await signUp(t);
