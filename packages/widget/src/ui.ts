@@ -11,6 +11,26 @@ const SVG_NS = 'http://www.w3.org/2000/svg';
 const ICON_CHAT = 'M4 3h16a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H9l-5 4v-4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z';
 const ICON_CLOSE = 'M6 6l12 12M18 6L6 18';
 const ICON_SEND = 'M3 20l18-8L3 4v6l11 2-11 2z';
+const ICON_MIC =
+  'M12 14a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v5a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11z';
+
+const NOTE = 'AI answers may be inaccurate';
+
+// The browser's speech-to-text. Not in TypeScript's DOM types, so only what we use is declared.
+interface Recognition {
+  lang: string;
+  interimResults: boolean;
+  start(): void;
+  stop(): void;
+  onresult: ((event: { results: ArrayLike<ArrayLike<{ transcript: string }>> }) => void) | null;
+  onerror: ((event: { error: string }) => void) | null;
+  onend: (() => void) | null;
+}
+
+function recognitionCtor(): (new () => Recognition) | undefined {
+  const w = window as unknown as Record<string, (new () => Recognition) | undefined>;
+  return w.SpeechRecognition ?? w.webkitSpeechRecognition;
+}
 
 function el<K extends keyof HTMLElementTagNameMap>(
   tag: K,
@@ -204,9 +224,18 @@ export function mount(config: WidgetConfig, api: string, siteKey: string): void 
   input.setAttribute('aria-label', 'Message');
   const sendButton = button('k', 'Send message');
   sendButton.append(icon(ICON_SEND));
-  footer.append(input, sendButton);
+  // Speak-to-type. Only offered where the browser can do it (not Firefox).
+  const mic = recognitionCtor() ? button('v', 'Speak your question') : null;
+  if (mic) {
+    mic.setAttribute('aria-pressed', 'false');
+    mic.append(icon(ICON_MIC));
+    footer.append(input, mic, sendButton);
+  } else {
+    footer.append(input, sendButton);
+  }
 
-  panel.append(header, list, footer, el('div', 'q', 'AI answers may be inaccurate'));
+  const note = el('div', 'q', NOTE);
+  panel.append(header, list, footer, note);
   wrap.append(launcher, panel);
   shadow.append(wrap);
 
@@ -236,7 +265,53 @@ export function mount(config: WidgetConfig, api: string, siteKey: string): void 
     input.style.height = `${input.scrollHeight + 2}px`;
   };
 
+  let listening: Recognition | null = null;
+  const stopListening = (): void => listening?.stop();
+
+  /** Dictation fills the text box as the visitor speaks. Nothing is sent until they press send. */
+  const toggleListening = (): void => {
+    if (listening) {
+      listening.stop();
+      return;
+    }
+    const Ctor = recognitionCtor();
+    if (!Ctor || !mic || busy) return;
+    const recognition = new Ctor();
+    const typed = input.value.trimEnd();
+    recognition.lang = document.documentElement.lang || navigator.language || 'en-US';
+    recognition.interimResults = true;
+    recognition.onresult = (event) => {
+      let spoken = '';
+      for (let i = 0; i < event.results.length; i++) spoken += event.results[i]?.[0]?.transcript ?? '';
+      input.value = `${typed}${typed && spoken ? ' ' : ''}${spoken}`.slice(0, LIMITS.messageMaxChars);
+      fitInput();
+    };
+    recognition.onerror = (event) => {
+      if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
+        note.textContent = 'Microphone access is blocked for this site.';
+      } else if (event.error !== 'aborted' && event.error !== 'no-speech') {
+        note.textContent = 'Voice input is not available right now.';
+      }
+    };
+    recognition.onend = () => {
+      listening = null;
+      mic.classList.remove('on');
+      mic.setAttribute('aria-pressed', 'false');
+      if (!panel.hidden && !busy) input.focus();
+    };
+    try {
+      recognition.start();
+      listening = recognition;
+      note.textContent = NOTE;
+      mic.classList.add('on');
+      mic.setAttribute('aria-pressed', 'true');
+    } catch {
+      // start() throws if the browser refuses outright; the button simply stays idle.
+    }
+  };
+
   const setOpen = (open: boolean): void => {
+    if (!open) stopListening();
     panel.hidden = !open;
     wrap.classList.toggle('o', open);
     launcher.setAttribute('aria-expanded', String(open));
@@ -251,8 +326,10 @@ export function mount(config: WidgetConfig, api: string, siteKey: string): void 
   const send = async (): Promise<void> => {
     const message = input.value.trim().slice(0, LIMITS.messageMaxChars);
     if (busy || !message) return;
+    stopListening();
     busy = true;
     input.disabled = sendButton.disabled = true;
+    if (mic) mic.disabled = true;
     // Hold screen-reader announcements until the reply is complete, not per token.
     list.setAttribute('aria-busy', 'true');
     input.value = '';
@@ -335,6 +412,7 @@ export function mount(config: WidgetConfig, api: string, siteKey: string): void 
       typing.remove();
       busy = false;
       input.disabled = sendButton.disabled = false;
+      if (mic) mic.disabled = false;
       list.removeAttribute('aria-busy');
       if (!panel.hidden) input.focus();
     }
@@ -343,6 +421,7 @@ export function mount(config: WidgetConfig, api: string, siteKey: string): void 
   launcher.addEventListener('click', () => setOpen(panel.hidden));
   close.addEventListener('click', () => setOpen(false));
   sendButton.addEventListener('click', () => void send());
+  mic?.addEventListener('click', toggleListening);
   input.addEventListener('input', fitInput);
   input.addEventListener('keydown', (event) => {
     // isComposing: Enter that confirms an IME candidate must not send the message.

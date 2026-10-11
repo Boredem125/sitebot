@@ -1,7 +1,7 @@
 // Class names are short because this string ships verbatim in the bundle:
 // w wrapper (l/r side, o open), b launcher (lg = shows the site logo), p panel, h header,
 // n name, x close, m message list, g message group (u user / a assistant), t text bubble
-// (md = rendered Markdown), li list row (in = nested), s sources, d typing dots, f footer, k send
+// (md = rendered Markdown), li list row (in = nested), s sources, d typing dots, f footer, v voice input (on = listening), k send
 // button, q note.
 //
 // Theme variables set on .w by ui.ts: --c accent, --t text on accent, --bg panel
@@ -68,7 +68,11 @@ textarea{flex:1;min-width:0;height:40px;max-height:112px;resize:none;padding:9px
 textarea::placeholder{color:color-mix(in srgb,var(--fg) 55%,var(--bg))}
 textarea:disabled{background:color-mix(in srgb,var(--fg) 6%,var(--bg))}
 .k{flex:none;width:40px;height:40px;border-radius:10px;background:var(--c);color:var(--t);display:flex;align-items:center;justify-content:center;box-shadow:inset 0 0 0 1px rgba(0,0,0,.08)}
-.k:disabled{opacity:.5;cursor:default}
+.k:disabled,.v:disabled{opacity:.5;cursor:default}
+.v{flex:none;width:40px;height:40px;border-radius:10px;display:flex;align-items:center;justify-content:center;border:1px solid color-mix(in srgb,var(--fg) 38%,transparent);color:color-mix(in srgb,var(--fg) 80%,var(--bg))}
+.v svg{width:20px;height:20px}
+.v.on{background:var(--c);color:var(--t);border-color:transparent;animation:pu 1.2s infinite}
+@keyframes pu{50%{box-shadow:0 0 0 5px color-mix(in srgb,var(--c) 30%,transparent)}}
 .q{flex:none;padding:0 12px 8px;font-size:11px;color:color-mix(in srgb,var(--fg) 60%,var(--bg));text-align:center}
 @media (max-width:479px){
 .w .p{inset:0;width:100%;height:100%;max-width:none;max-height:none;border:0;border-radius:0}
