@@ -1,7 +1,7 @@
 // Class names are short because this string ships verbatim in the bundle:
 // w wrapper (l/r side, o open), b launcher (lg = shows the site logo), p panel, h header,
 // n name, x close, m message list, g message group (u user / a assistant), t text bubble
-// (md = rendered Markdown), li list row, s sources, d typing dots, f footer, k send
+// (md = rendered Markdown), li list row (in = nested), s sources, d typing dots, f footer, k send
 // button, q note.
 //
 // Theme variables set on .w by ui.ts: --c accent, --t text on accent, --bg panel
@@ -50,6 +50,7 @@ button{cursor:pointer;border:0;padding:0;background:none}
 .md p{margin:0}
 .md a{color:var(--lk);text-decoration:underline}
 .li{display:flex;gap:8px}
+.in{margin-left:22px}
 .li>span:first-child{flex:none;min-width:14px;font-variant-numeric:tabular-nums;color:color-mix(in srgb,var(--fg) 65%,var(--bg))}
 .li>span:last-child{min-width:0}
 code,pre{font:12.5px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;background:color-mix(in srgb,var(--fg) 12%,var(--bg));border-radius:5px}
