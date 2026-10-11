@@ -1,6 +1,7 @@
 import { LIMITS } from '@sitebot/shared';
 import type { ApiError, ChatRequest, SourceLink, WidgetConfig } from '@sitebot/shared';
 import { streamChat } from './api';
+import { renderMarkdown } from './md';
 import { CSS } from './styles';
 
 const GENERIC_FAILURE = 'Sorry, something went wrong. Please try again.';
@@ -47,15 +48,36 @@ function icon(d: string, stroked = false): SVGSVGElement {
   return svg;
 }
 
-/** Black or white, whichever contrasts better with `hex` (#rrggbb), by WCAG relative luminance. */
-function textOn(hex: string): string {
+/** WCAG relative luminance of `hex` (#rrggbb). */
+function luminance(hex: string): number {
   const channel = (at: number): number => {
     const v = parseInt(hex.slice(at, at + 2), 16) / 255;
     return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
   };
-  const luminance = 0.2126 * channel(1) + 0.7152 * channel(3) + 0.0722 * channel(5);
-  // 0.179 is the luminance at which black and white give the same contrast ratio.
-  return luminance > 0.179 ? '#000' : '#fff';
+  return 0.2126 * channel(1) + 0.7152 * channel(3) + 0.0722 * channel(5);
+}
+
+// 0.179 is the luminance at which black and white give the same contrast ratio.
+const isLight = (hex: string): boolean => luminance(hex) > 0.179;
+
+function contrast(a: string, b: string): number {
+  const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x) as [number, number];
+  return (hi + 0.05) / (lo + 0.05);
+}
+
+/** The site logo, or null. It removes itself if the image cannot be loaded. */
+function logo(url: string | undefined, onFail: () => void): HTMLImageElement | null {
+  if (!url) return null;
+  const img = el('img');
+  img.alt = '';
+  img.decoding = 'async';
+  img.referrerPolicy = 'no-referrer';
+  img.addEventListener('error', () => {
+    img.remove();
+    onFail();
+  });
+  img.src = url;
+  return img;
 }
 
 function inSeconds(value: unknown): string {
@@ -130,12 +152,31 @@ export function mount(config: WidgetConfig, api: string, siteKey: string): void 
   }
 
   const wrap = el('div', `w ${config.position === 'left' ? 'l' : 'r'}`);
+  // The panel takes the site's own colours and font so it reads as part of the page.
+  const background = config.background ?? '#ffffff';
+  const text =
+    config.textColor && contrast(config.textColor, background) >= 4.5
+      ? config.textColor
+      : isLight(background)
+        ? '#111827'
+        : '#f3f4f6';
   wrap.style.setProperty('--c', config.color);
-  wrap.style.setProperty('--t', textOn(config.color));
+  wrap.style.setProperty('--t', isLight(config.color) ? '#000' : '#fff');
+  wrap.style.setProperty('--bg', background);
+  wrap.style.setProperty('--fg', text);
+  // Links use the accent only where it is readable on the panel.
+  wrap.style.setProperty('--lk', contrast(config.color, background) >= 3 ? config.color : text);
+  // The family name is validated in loadConfig, so it cannot contain a quote.
+  if (config.font) wrap.style.setProperty('--ff', `"${config.font}"`);
 
   const launcher = button('b', 'Chat');
   launcher.setAttribute('aria-expanded', 'false');
   launcher.setAttribute('aria-controls', 'p');
+  const launcherLogo = logo(config.logoUrl, () => launcher.classList.remove('lg'));
+  if (launcherLogo) {
+    launcher.classList.add('lg');
+    launcher.append(launcherLogo);
+  }
   launcher.append(icon(ICON_CHAT), icon(ICON_CLOSE, true));
 
   const panel = el('div', 'p');
@@ -147,6 +188,8 @@ export function mount(config: WidgetConfig, api: string, siteKey: string): void 
   const header = el('div', 'h');
   const close = button('x', 'Close chat');
   close.append(icon(ICON_CLOSE, true));
+  const headerLogo = logo(config.logoUrl, () => {});
+  if (headerLogo) header.append(headerLogo);
   header.append(el('div', 'n', config.name), close);
 
   const list = el('div', 'm');
@@ -181,12 +224,11 @@ export function mount(config: WidgetConfig, api: string, siteKey: string): void 
   const addMessage = (role: 'u' | 'a', text: string) => {
     const group = el('div', `g ${role}`);
     const bubble = el('div', 't');
-    // Answers are rendered as plain text only; a Text node can never become markup.
-    const textNode = document.createTextNode(text);
-    bubble.append(textNode);
+    // Plain text here; only streamed answers go through the Markdown renderer.
+    bubble.textContent = text;
     group.append(bubble);
     list.append(group);
-    return { group, bubble, textNode };
+    return { group, bubble };
   };
 
   const fitInput = (): void => {
@@ -218,6 +260,7 @@ export function mount(config: WidgetConfig, api: string, siteKey: string): void 
 
     addMessage('u', message);
     const reply = addMessage('a', '');
+    let answer = '';
     const typing = el('span', 'd');
     typing.setAttribute('role', 'img');
     typing.setAttribute('aria-label', 'Assistant is typing');
@@ -229,8 +272,8 @@ export function mount(config: WidgetConfig, api: string, siteKey: string): void 
     const say = (line: string): void => {
       typing.remove();
       keepPinned(() => {
-        if (reply.textNode.data) addMessage('a', line);
-        else reply.textNode.data = line;
+        if (answer) addMessage('a', line);
+        else reply.bubble.textContent = line;
       });
     };
 
@@ -250,12 +293,16 @@ export function mount(config: WidgetConfig, api: string, siteKey: string): void 
           case 'delta':
             if (typeof event.text === 'string' && event.text) {
               typing.remove();
-              keepPinned(() => reply.textNode.appendData(event.text));
+              answer += event.text;
+              keepPinned(() => {
+                reply.bubble.classList.add('md');
+                renderMarkdown(reply.bubble, answer);
+              });
             }
             break;
           case 'done': {
             finished = true;
-            if (!reply.textNode.data) {
+            if (!answer) {
               say(GENERIC_FAILURE);
               break;
             }

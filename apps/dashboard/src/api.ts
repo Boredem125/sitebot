@@ -159,6 +159,12 @@ export async function updateSite(id: string, body: UpdateSiteRequest): Promise<S
   return res.site;
 }
 
+/** Re-reads colours, font, and logo from the site and saves them. */
+export async function detectBrand(id: string): Promise<Site> {
+  const res = await request<{ site: Site }>(`/api/sites/${seg(id)}/brand`, { method: 'POST' });
+  return res.site;
+}
+
 // ---------- sources ----------
 
 export async function listSources(siteId: string, signal?: AbortSignal): Promise<Source[]> {

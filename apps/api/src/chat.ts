@@ -111,7 +111,7 @@ publicApi.get('/widget/config', async (c) => {
   if (site.text_color) config.textColor = site.text_color;
   if (site.font) config.font = site.font;
   if (site.logo_url) config.logoUrl = site.logo_url;
-  c.header('Cache-Control', 'public, max-age=300');
+  c.header('Cache-Control', 'public, max-age=60');
   return c.json(config);
 });
 

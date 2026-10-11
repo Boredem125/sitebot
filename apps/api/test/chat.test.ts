@@ -736,7 +736,7 @@ describe('GET /v1/widget/config', () => {
 
     expect(res.status).toBe(200);
     expect(res.headers.get('access-control-allow-origin')).toBe('*');
-    expect(res.headers.get('cache-control')).toBe('public, max-age=300');
+    expect(res.headers.get('cache-control')).toBe('public, max-age=60');
     expect(await res.json<WidgetConfig>()).toEqual({
       name: 'Test Site',
       greeting: 'Welcome!',
