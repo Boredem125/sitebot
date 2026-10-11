@@ -24,9 +24,12 @@
   "vectorize": [{ "binding": "VECTORIZE", "index_name": "sitebot-chunks", "remote": true }],
   "ai": { "binding": "AI", "remote": true },
   "r2_buckets": [{ "binding": "UPLOADS", "bucket_name": "sitebot-uploads" }],
+  // Renders pages that draw their content with JavaScript. Free plan: 10 browser minutes a day.
+  "browser": { "binding": "BROWSER", "remote": true },
   "queues": {
     "producers": [{ "binding": "INGEST_QUEUE", "queue": "sitebot-ingest" }],
-    "consumers": [{ "queue": "sitebot-ingest", "max_batch_size": 5, "max_retries": 3 }]
+    // One consumer at a time: page renders are rate limited, and pacing only works in sequence.
+    "consumers": [{ "queue": "sitebot-ingest", "max_batch_size": 5, "max_retries": 3, "max_concurrency": 1 }]
   },
   // Weekly re-crawl: Mondays 03:00 UTC.
   "triggers": { "crons": ["0 3 * * 1"] }

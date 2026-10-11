@@ -10,6 +10,8 @@ export interface Env {
   AI: Ai;
   UPLOADS: R2Bucket;
   INGEST_QUEUE: Queue<IngestJob>;
+  /** Cloudflare Browser Run, for pages that only show their text after JavaScript runs. Optional. */
+  BROWSER?: BrowserRun;
   /** Secret. Never log it or return it to a client. */
   GROQ_API_KEY: string;
   DEFAULT_MODEL: string;

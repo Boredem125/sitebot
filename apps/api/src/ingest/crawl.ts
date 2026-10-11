@@ -4,11 +4,14 @@ import { CRAWLER_USER_AGENT, type Env, type IngestJob } from '../env';
 import { applyBrand, detectBrand } from './brand';
 import { decodeEntities, extractHtml } from './extract';
 import { batches, deleteChunks, indexDocument, loadSource, setSourceStatus } from './index-doc';
+import { renderPage } from './render';
 import { bareHost, isSafeUrl, normalizeUrl } from './url';
 
 const MAX_BODY_BYTES = 2 * 1024 * 1024;
 const FETCH_TIMEOUT_MS = 10_000;
 const MAX_REDIRECTS = 3;
+/** Below this much text a page is treated as a JavaScript shell and rendered in a browser. */
+const THIN_TEXT_CHARS = 200;
 /** Applies to sitemaps named by robots.txt and, separately, to children of a sitemap index. */
 const MAX_SITEMAPS = 5;
 /** Product token of CRAWLER_USER_AGENT, as it would appear in a robots.txt group. */
@@ -337,6 +340,19 @@ export async function crawlPage(env: Env, job: PageJob): Promise<void> {
     } catch {
       // A page that cannot be fetched or parsed is recorded as an error, never retried.
       page = null;
+    }
+    if (page && page.text.length < THIN_TEXT_CHARS) {
+      // Almost no text in the raw HTML usually means the page draws itself in the browser.
+      // Only such pages are rendered: browser time is metered, plain fetches are not.
+      const rendered = await renderPage(env, page.finalUrl, site);
+      if (rendered) {
+        const extracted = await extractHtml(
+          new Response(rendered.html, { headers: { 'content-type': 'text/html; charset=utf-8' } }),
+          rendered.finalUrl,
+        );
+        // The raw HTML stays in `page.html` for brand detection: its <head> is the same.
+        if (extracted.text.length > page.text.length) page = { ...page, ...extracted };
+      }
     }
     if (page) {
       // Failures past this point are ours (D1, Vectorize, Workers AI): let them throw and retry.
