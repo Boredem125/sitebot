@@ -100,7 +100,7 @@ export function renderMarkdown(target: HTMLElement, source: string): void {
       flush();
       const row = document.createElement('div');
       // A bullet indented under a numbered step stays visually under it.
-      row.className = /^s{2,}/.test(raw) ? 'li in' : 'li';
+      row.className = /^\s{2,}/.test(raw) ? 'li in' : 'li';
       const marker = document.createElement('span');
       marker.textContent = /\d/.test(item[1] ?? '') ? (item[1] ?? '').replace(')', '.') : '•';
       const body = document.createElement('span');
