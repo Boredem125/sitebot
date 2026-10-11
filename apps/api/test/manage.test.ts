@@ -114,8 +114,17 @@ const objectsOf = async (t: TestEnv, siteId: string): Promise<string[]> =>
 const r2KeyOf = async (db: D1Database, sourceId: string): Promise<string> =>
   (await db.prepare('SELECT r2_key FROM sources WHERE id = ?1').bind(sourceId).first<{ r2_key: string }>())?.r2_key ?? '';
 
-async function setStatus(db: D1Database, sourceId: string, status: string, error: string | null = null): Promise<void> {
-  await db.prepare('UPDATE sources SET status = ?2, error = ?3, updated_at = 1000 WHERE id = ?1').bind(sourceId, status, error).run();
+async function setStatus(
+  db: D1Database,
+  sourceId: string,
+  status: string,
+  error: string | null = null,
+  updatedAt = 1000,
+): Promise<void> {
+  await db
+    .prepare('UPDATE sources SET status = ?2, error = ?3, updated_at = ?4 WHERE id = ?1')
+    .bind(sourceId, status, error, updatedAt)
+    .run();
 }
 
 describe('DELETE /sites/:id/sources/:sid', () => {
@@ -354,15 +363,31 @@ describe('POST /sites/:id/sources/:sid/recrawl', () => {
     const { site, crawl } = await createSite(t, a);
     const jobsBefore = t.queue.sent.length;
 
+    // Progress one minute ago: the crawl is alive.
+    const recent = Date.now() - 60_000;
     for (const status of ['pending', 'processing']) {
-      await setStatus(t.env.DB, crawl.id, status);
+      await setStatus(t.env.DB, crawl.id, status, null, recent);
       const res = await call(t, `/sites/${site.id}/sources/${crawl.id}/recrawl`, { method: 'POST', cookie: a.cookie });
       expect(res.status, status).toBe(409);
       expect((await json<ApiError>(res)).code).toBe('conflict');
       const row = await t.env.DB.prepare('SELECT status, updated_at FROM sources WHERE id = ?1').bind(crawl.id).first();
-      expect(row).toEqual({ status, updated_at: 1000 });
+      expect(row).toEqual({ status, updated_at: recent });
     }
     expect(t.queue.sent).toHaveLength(jobsBefore);
+  });
+
+  it('restarts a crawl that has made no progress for 15 minutes', async () => {
+    const t = makeEnv();
+    const a = await signUp(t);
+    const { site, crawl } = await createSite(t, a);
+    const jobsBefore = t.queue.sent.length;
+
+    await setStatus(t.env.DB, crawl.id, 'processing', null, Date.now() - 16 * 60_000);
+    const res = await call(t, `/sites/${site.id}/sources/${crawl.id}/recrawl`, { method: 'POST', cookie: a.cookie });
+    expect(res.status).toBe(200);
+    expect(t.queue.sent.slice(jobsBefore)).toEqual([{ type: 'crawl', siteId: site.id, sourceId: crawl.id }]);
+    const row = await t.env.DB.prepare('SELECT status FROM sources WHERE id = ?1').bind(crawl.id).first();
+    expect(row).toEqual({ status: 'pending' });
   });
 
   it('is limited to 6 per hour per site', async () => {

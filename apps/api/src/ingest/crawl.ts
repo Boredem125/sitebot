@@ -405,11 +405,18 @@ export async function abandonPage(env: Env, job: PageJob): Promise<void> {
 }
 
 async function settlePage(env: Env, job: PageJob, status: 'done' | 'error'): Promise<void> {
-  await env.DB.prepare(
-    `UPDATE crawl_pages SET status = ?3 WHERE source_id = ?1 AND url = ?2 AND status = 'pending'`,
-  )
-    .bind(job.sourceId, job.url, status)
-    .run();
+  await env.DB.batch([
+    env.DB.prepare(
+      `UPDATE crawl_pages SET status = ?3 WHERE source_id = ?1 AND url = ?2 AND status = 'pending'`,
+    ).bind(job.sourceId, job.url, status),
+    // Marks the crawl as alive. A crawl that has not settled a page for a while is treated
+    // as stuck, and the owner may then start it again.
+    env.DB.prepare('UPDATE sources SET updated_at = ?3 WHERE id = ?1 AND site_id = ?2').bind(
+      job.sourceId,
+      job.siteId,
+      Date.now(),
+    ),
+  ]);
   await finishIfIdle(env, job.siteId, job.sourceId);
 }
 

@@ -30,6 +30,10 @@ const STATUS_LABELS: Record<SourceStatus, string> = {
 
 const isActive = (source: Source): boolean => source.status === 'pending' || source.status === 'processing';
 
+// Matches the API: a crawl that has made no progress for 15 minutes may be started again.
+const STUCK_MS = 15 * 60_000;
+const isStuck = (source: Source): boolean => isActive(source) && Date.now() - source.updatedAt > STUCK_MS;
+
 export function ContentTab({ siteId }: { siteId: string }) {
   const { state, reload, setData } = useLoad((signal) => listSources(siteId, signal), siteId);
   const sources = state.status === 'ready' ? state.data : null;
@@ -218,8 +222,8 @@ function SourceRow({ siteId, source, onChanged, onDeleted, onStale }: SourceRowP
               <Button
                 className="btn-sm"
                 busy={busy === 'recrawl'}
-                disabled={isActive(source) || busy !== null}
-                title={isActive(source) ? 'This source is being indexed' : undefined}
+                disabled={(isActive(source) && !isStuck(source)) || busy !== null}
+                title={isActive(source) && !isStuck(source) ? 'This source is being indexed' : undefined}
                 aria-describedby={titleId}
                 onClick={() => void onRecrawl()}
               >

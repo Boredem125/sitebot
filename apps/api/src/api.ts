@@ -34,6 +34,7 @@ import { resetRoutes } from './reset';
 import { apiError, clientIp, newId, randomToken } from './util';
 
 const MAX_SITES_PER_USER = 10;
+const STUCK_CRAWL_MS = 15 * 60_000;
 const MAX_SOURCES_PER_SITE = 50;
 const MAX_DOMAINS = 10;
 const PREVIEW_CHARS = 120;
@@ -451,11 +452,16 @@ api.get('/sites/:id/sources', async (c) => {
   const site = await ownedSite(c);
   if (!site) return notFound(c);
   const { results } = await c.env.DB.prepare(
-    'SELECT * FROM sources WHERE site_id = ?1 ORDER BY created_at DESC, rowid DESC',
+    `SELECT s.*,
+            (SELECT COUNT(*) FROM crawl_pages p WHERE p.source_id = s.id AND p.status = 'done') AS done_pages
+     FROM sources s WHERE s.site_id = ?1 ORDER BY s.created_at DESC, s.rowid DESC`,
   )
     .bind(site.id)
-    .all<SourceRow>();
-  return c.json({ sources: results.map(toSource) });
+    .all<SourceRow & { done_pages: number }>();
+  // `pages` is only written when a crawl finishes; while it runs, report the pages read so far.
+  return c.json({
+    sources: results.map((row) => toSource(row.status === 'processing' ? { ...row, pages: row.done_pages } : row)),
+  });
 });
 
 api.post('/sites/:id/sources/crawl', async (c) => {
@@ -578,7 +584,11 @@ api.post('/sites/:id/sources/:sid/recrawl', async (c) => {
   if (!source) return notFound(c);
   if (source.kind !== 'crawl') return invalid(c, 'Only website sources can be re-crawled');
   const busy = (): Response => apiError(c, 409, 'conflict', 'This source is already being indexed');
-  if (source.status === 'pending' || source.status === 'processing') return busy();
+  // A crawl bumps updated_at with every page. One that has been silent this long is stuck
+  // (a lost job, an outage), and refusing to restart it would leave the owner with no way out.
+  const staleBefore = Date.now() - STUCK_CRAWL_MS;
+  const running = source.status === 'pending' || source.status === 'processing';
+  if (running && source.updated_at > staleBefore) return busy();
 
   // Each re-crawl fetches up to a whole site, so it is limited per site.
   const limit = await rateLimit(c.env.DB, `recrawl:${site.id}`, 6, 3600);
@@ -589,9 +599,9 @@ api.post('/sites/:id/sources/:sid/recrawl', async (c) => {
   // The status check is repeated in the UPDATE so two clicks cannot queue two crawls.
   const claimed = await c.env.DB.prepare(
     `UPDATE sources SET status = 'pending', error = NULL, updated_at = ?3
-     WHERE id = ?1 AND site_id = ?2 AND status NOT IN ('pending', 'processing')`,
+     WHERE id = ?1 AND site_id = ?2 AND (status NOT IN ('pending', 'processing') OR updated_at <= ?4)`,
   )
-    .bind(source.id, site.id, Date.now())
+    .bind(source.id, site.id, Date.now(), staleBefore)
     .run();
   if (claimed.meta.changes === 0) return busy();
   await enqueue(c.env, { type: 'crawl', siteId: site.id, sourceId: source.id });
