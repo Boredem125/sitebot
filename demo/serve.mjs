@@ -39,7 +39,7 @@ const server = createServer(async (req, res) => {
 
   try {
     const body = await readFile(route.file);
-    send(200, route.type, path === '/' && siteKey ? body.toString().replaceAll('pk_REPLACE_ME', siteKey) : body);
+    send(200, route.type, path === '/' && siteKey ? body.toString().replace('data-site="pk_REPLACE_ME"', `data-site="${siteKey}"`) : body);
   } catch {
     send(
       404,
