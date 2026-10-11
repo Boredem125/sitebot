@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import type { FormEvent } from 'react';
+import { INSIGHT_LIMITS } from '@sitebot/shared';
 import type { Site, UpdateSiteRequest } from '@sitebot/shared';
 import { detectBrand, updateSite } from '../api';
 import { Button, Notice } from '../components/ui';
@@ -8,6 +9,7 @@ import { contrastOn, errorMessage, isHexColor, safeColor } from '../lib/format';
 const NAME_MAX = 80;
 const GREETING_MAX = 200;
 const INSTRUCTIONS_MAX = 2000;
+const QUESTION_SLOTS = Array.from({ length: INSIGHT_LIMITS.suggestedQuestions }, (_, i) => i);
 
 interface FormValues {
   name: string;
@@ -21,6 +23,9 @@ interface FormValues {
   textColor: string;
   font: string;
   logoUrl: string;
+  /** One entry per input, always QUESTION_SLOTS long. Empty ones are left out when saving. */
+  suggestedQuestions: string[];
+  leadCapture: boolean;
 }
 
 const LOOK_KEYS = ['background', 'textColor', 'font', 'logoUrl'] as const;
@@ -36,7 +41,11 @@ const toForm = (site: Site): FormValues => ({
   textColor: site.textColor ?? '',
   font: site.font ?? '',
   logoUrl: site.logoUrl ?? '',
+  suggestedQuestions: QUESTION_SLOTS.map((i) => site.suggestedQuestions[i] ?? ''),
+  leadCapture: site.leadCapture,
 });
+
+const filledQuestions = (questions: string[]): string[] => questions.map((q) => q.trim()).filter((q) => q !== '');
 
 const optionalHex = (value: string): boolean => value.trim() === '' || isHexColor(value.trim());
 
@@ -89,6 +98,9 @@ function diff(site: Site, form: FormValues): UpdateSiteRequest {
     const value = form[key].trim() || null;
     if (value !== site[key]) patch[key] = value;
   }
+  const questions = filledQuestions(form.suggestedQuestions);
+  if (!sameList(questions, site.suggestedQuestions)) patch.suggestedQuestions = questions;
+  if (form.leadCapture !== site.leadCapture) patch.leadCapture = form.leadCapture;
   return patch;
 }
 
@@ -108,6 +120,13 @@ export function AppearanceTab({ site, onSaved }: { site: Site; onSaved: (site: S
   function set<K extends keyof FormValues>(key: K, value: FormValues[K]): void {
     setForm((prev) => ({ ...prev, [key]: value }));
     setSave((prev) => (prev.status === 'saving' ? prev : { status: 'idle' }));
+  }
+
+  function setQuestion(index: number, value: string): void {
+    set(
+      'suggestedQuestions',
+      form.suggestedQuestions.map((q, i) => (i === index ? value : q)),
+    );
   }
 
   async function onSubmit(event: FormEvent<HTMLFormElement>): Promise<void> {
@@ -204,6 +223,26 @@ export function AppearanceTab({ site, onSaved }: { site: Site; onSaved: (site: S
             onChange={(e) => set('greeting', e.target.value)}
           />
         </div>
+
+        <fieldset className="field">
+          <legend>Suggested questions</legend>
+          {QUESTION_SLOTS.map((i) => (
+            <input
+              key={i}
+              type="text"
+              maxLength={INSIGHT_LIMITS.suggestedQuestionMaxChars}
+              aria-label={`Suggested question ${i + 1}`}
+              aria-describedby="ap-questions-hint"
+              placeholder={i === 0 ? 'What does it cost?' : undefined}
+              value={form.suggestedQuestions[i] ?? ''}
+              onChange={(e) => setQuestion(i, e.target.value)}
+            />
+          ))}
+          <p id="ap-questions-hint" className="hint">
+            Shown as buttons under the greeting, so visitors can start with one click. Leave them empty and they
+            are filled in automatically from your content.
+          </p>
+        </fieldset>
 
         <div className="form-row">
           <fieldset className="field">
@@ -337,6 +376,22 @@ export function AppearanceTab({ site, onSaved }: { site: Site; onSaved: (site: S
         </div>
 
         <div className="field">
+          <label className="check">
+            <input
+              type="checkbox"
+              aria-describedby="ap-lead-hint"
+              checked={form.leadCapture}
+              onChange={(e) => set('leadCapture', e.target.checked)}
+            />
+            <span>Ask for an email when the bot cannot answer</span>
+          </label>
+          <p id="ap-lead-hint" className="hint">
+            The emails appear under Questions. You are responsible for telling your visitors how their address is
+            used, for example in your privacy policy.
+          </p>
+        </div>
+
+        <div className="field">
           <label htmlFor="ap-domains">Allowed domains</label>
           <textarea
             id="ap-domains"
@@ -372,6 +427,7 @@ export function AppearanceTab({ site, onSaved }: { site: Site; onSaved: (site: S
         font={form.font.trim()}
         logoUrl={safeLogo(form.logoUrl)}
         position={form.position}
+        questions={filledQuestions(form.suggestedQuestions)}
       />
     </div>
   );
@@ -386,10 +442,11 @@ interface PreviewProps {
   font: string;
   logoUrl: string | null;
   position: Site['position'];
+  questions: string[];
 }
 
 /** A static sketch of the widget. The real widget.js is never loaded into the dashboard. */
-function Preview({ name, greeting, color, background, textColor, font, logoUrl, position }: PreviewProps) {
+function Preview({ name, greeting, color, background, textColor, font, logoUrl, position, questions }: PreviewProps) {
   const [brokenLogo, setBrokenLogo] = useState<string | null>(null);
   const accent = safeColor(color);
   const onAccent = contrastOn(accent);
@@ -412,6 +469,15 @@ function Preview({ name, greeting, color, background, textColor, font, logoUrl, 
           </div>
           <div className="pv-body">
             {greeting && <div className="pv-bubble pv-bot">{greeting}</div>}
+            {questions.length > 0 && (
+              <div className="pv-pills">
+                {questions.map((question, i) => (
+                  <span key={i} className="pv-pill">
+                    {question}
+                  </span>
+                ))}
+              </div>
+            )}
             <div className="pv-bubble pv-user" style={{ backgroundColor: accent, color: onAccent }}>
               How do I get started?
             </div>

@@ -1,4 +1,5 @@
 import type { Env, IngestJob } from '../env';
+import { refreshSuggestions } from '../suggest';
 import { indexDocument, loadSource, setSourceStatus } from './index-doc';
 
 type UploadJob = Extract<IngestJob, { type: 'upload' }>;
@@ -38,6 +39,7 @@ export async function processUpload(env: Env, job: UploadJob): Promise<void> {
   const result = await indexDocument(env, { siteId, sourceId, url: '', title: name, text });
   if (result === 'empty') return fail('No text found in this file');
   await setSourceStatus(env, siteId, sourceId, 'ready', null, 1);
+  await refreshSuggestions(env, siteId);
 }
 
 /** Indexes one question-and-answer pair entered in the dashboard. */
@@ -48,4 +50,5 @@ export async function processQa(env: Env, job: QaJob): Promise<void> {
   const text = `Q: ${source.label}\nA: ${source.content ?? ''}`;
   await indexDocument(env, { siteId, sourceId, url: '', title: source.label, text });
   await setSourceStatus(env, siteId, sourceId, 'ready', null, 1);
+  await refreshSuggestions(env, siteId);
 }

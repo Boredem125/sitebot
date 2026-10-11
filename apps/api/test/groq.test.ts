@@ -294,6 +294,17 @@ describe('streamAnswer', () => {
     ]);
   });
 
+  it('accepts a comma-separated list pasted into GROQ_API_KEY itself, quotes and spaces included', async () => {
+    const attempts = mockGroq(({ key }) => (key === 'key-three' ? okResponse(answer('From three')) : limited('30')));
+    const env = { GROQ_API_KEY: ' "key-one", key-two ,\n', GROQ_API_KEYS: "'key-three'" };
+    expect(textOf(await collect(streamAnswer(env, MODEL, messages)))).toBe('From three');
+    expect(attempts).toEqual([
+      { key: 'key-one', model: MODEL },
+      { key: 'key-two', model: MODEL },
+      { key: 'key-three', model: MODEL },
+    ]);
+  });
+
   it('falls back to FALLBACK_MODEL once every key is rate limited', async () => {
     const attempts = mockGroq(({ model }) => (model === MODEL ? limited('30') : okResponse(answer('Smaller model'))));
     const env = { GROQ_API_KEY: 'key-one', GROQ_API_KEYS: 'key-two', FALLBACK_MODEL: FALLBACK };

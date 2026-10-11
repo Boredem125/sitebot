@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
-import { LIMITS } from '@sitebot/shared';
-import type { ChatEvent, ChatRequest, SourceLink, WidgetConfig } from '@sitebot/shared';
+import type { Context } from 'hono';
+import { INSIGHT_LIMITS, LIMITS } from '@sitebot/shared';
+import type { ChatEvent, ChatRequest, LeadRequest, SourceLink, WidgetConfig } from '@sitebot/shared';
 import { createCitationFilter } from './citations';
 import { parseJson, siteByPublicKey, type ChunkRow, type SiteRow } from './db';
 import type { Env } from './env';
@@ -15,6 +16,10 @@ const MAX_SOURCES = 3;
 const IP_LIMIT_PER_MIN = 10;
 const SITE_LIMIT_PER_MIN = 60;
 const DEFAULT_BUSY_RETRY_SEC = 20;
+const LEAD_IP_LIMIT_PER_HOUR = 3;
+const LEAD_SITE_LIMIT_PER_HOUR = 60;
+// Deliberately loose: it only has to catch typos. The owner replies by mail anyway.
+const EMAIL_SHAPE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 const NO_INFO_REPLY =
   "I don't have information about that yet. Please contact the site directly for help with this.";
@@ -95,6 +100,15 @@ async function retrieveChunks(env: Env, siteId: string, question: string): Promi
   });
 }
 
+/** The site's starter questions. The column holds JSON from the dashboard or the model, so it is re-checked. */
+function suggestedQuestions(site: SiteRow): string[] {
+  const stored = parseJson<unknown>(site.suggested_questions, []);
+  if (!Array.isArray(stored)) return [];
+  return stored
+    .filter((q): q is string => typeof q === 'string' && q.trim() !== '')
+    .slice(0, INSIGHT_LIMITS.suggestedQuestions);
+}
+
 export const publicApi = new Hono<{ Bindings: Env }>();
 
 publicApi.get('/widget/config', async (c) => {
@@ -111,12 +125,15 @@ publicApi.get('/widget/config', async (c) => {
   if (site.text_color) config.textColor = site.text_color;
   if (site.font) config.font = site.font;
   if (site.logo_url) config.logoUrl = site.logo_url;
+  const suggested = suggestedQuestions(site);
+  if (suggested.length > 0) config.suggestedQuestions = suggested;
+  if (site.lead_capture === 1) config.leadCapture = true;
   c.header('Cache-Control', 'public, max-age=60');
   return c.json(config);
 });
 
 // The preflight carries no site key, so any origin is reflected here. The POST enforces the allowlist.
-publicApi.options('/chat', (c) => {
+const preflight = (c: Context): Response => {
   const headers = new Headers({
     'Access-Control-Allow-Methods': 'POST',
     'Access-Control-Allow-Headers': 'content-type',
@@ -126,7 +143,10 @@ publicApi.options('/chat', (c) => {
   const origin = c.req.header('Origin');
   if (origin) headers.set('Access-Control-Allow-Origin', origin);
   return new Response(null, { status: 204, headers });
-});
+};
+
+publicApi.options('/chat', preflight);
+publicApi.options('/lead', preflight);
 
 publicApi.post('/chat', async (c) => {
   const env = c.env;
@@ -226,11 +246,18 @@ publicApi.post('/chat', async (c) => {
     }
   };
 
-  const persist = async (answer: string, sources: SourceLink[], usage: TokenUsage): Promise<void> => {
+  const persist = async (
+    answer: string,
+    sources: SourceLink[],
+    usage: TokenUsage,
+    answered: boolean,
+  ): Promise<void> => {
     const now = Date.now();
+    // Both rows of the turn carry the flag, so unanswered questions can be listed from the user rows alone.
+    const flag = answered ? 1 : 0;
     const insertMessage = db.prepare(
-      `INSERT INTO messages (id, conversation_id, site_id, role, content, sources, created_at)
-       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)`,
+      `INSERT INTO messages (id, conversation_id, site_id, role, content, sources, created_at, answered)
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)`,
     );
     await db.batch([
       isNewConversation
@@ -240,9 +267,18 @@ publicApi.post('/chat', async (c) => {
         : db
             .prepare('UPDATE conversations SET updated_at = ?1 WHERE id = ?2 AND site_id = ?3')
             .bind(now, conversationId, site.id),
-      insertMessage.bind(newId(), conversationId, site.id, 'user', message, '[]', now),
+      insertMessage.bind(newId(), conversationId, site.id, 'user', message, '[]', now, flag),
       // One millisecond later so the pair always reads back in order.
-      insertMessage.bind(newId(), conversationId, site.id, 'assistant', answer, JSON.stringify(sources), now + 1),
+      insertMessage.bind(
+        newId(),
+        conversationId,
+        site.id,
+        'assistant',
+        answer,
+        JSON.stringify(sources),
+        now + 1,
+        flag,
+      ),
       recordUsageStatement(db, site.id, usage, now),
     ]);
   };
@@ -258,6 +294,8 @@ publicApi.post('/chat', async (c) => {
       let answer = '';
       let sources: SourceLink[] = [];
       let usage: TokenUsage = { promptTokens: 0, completionTokens: 0, cachedTokens: 0 };
+      // Stays false when nothing was retrieved or the model cited no passage for what it said.
+      let answered = false;
 
       if (chunks.length === 0) {
         // Nothing to ground an answer in, so the model is not called at all.
@@ -307,13 +345,16 @@ publicApi.post('/chat', async (c) => {
           await send({ type: 'error', message: GENERIC_ERROR });
           return;
         }
+        answered = citations.cited.size > 0;
         sources = sourceLinks(chunks.filter((_, i) => citations.cited.has(i + 1)));
       }
 
-      await send({ type: 'done', sources });
+      const done: Extract<ChatEvent, { type: 'done' }> = { type: 'done', sources };
+      if (!answered && site.lead_capture === 1) done.offerContact = true;
+      await send(done);
       // Close first so the visitor is not kept waiting on the D1 write.
       await closeWriter();
-      await persist(answer, sources, usage);
+      await persist(answer, sources, usage, answered);
     } catch {
       console.error('chat: failed to finish the response');
     } finally {
@@ -332,4 +373,63 @@ publicApi.post('/chat', async (c) => {
       Vary: 'Origin',
     },
   });
+});
+
+publicApi.post('/lead', async (c) => {
+  const db = c.env.DB;
+
+  let body: Partial<LeadRequest> | null;
+  try {
+    body = await c.req.json<Partial<LeadRequest> | null>();
+  } catch {
+    return apiError(c, 400, 'invalid', 'Request body must be JSON');
+  }
+  if (!body || typeof body.siteKey !== 'string') return apiError(c, 400, 'invalid', 'siteKey is required');
+
+  const site = await siteByPublicKey(db, body.siteKey);
+  if (!site) return apiError(c, 404, 'not_found', 'Unknown site key');
+
+  const origin = c.req.header('Origin');
+  if (!origin || !isOriginAllowed(origin, parseJson<string[]>(site.domains, []))) {
+    return apiError(c, 403, 'forbidden_origin', 'This site is not allowed to use this widget');
+  }
+  c.header('Access-Control-Allow-Origin', origin);
+  c.header('Vary', 'Origin');
+
+  if (site.lead_capture !== 1) return apiError(c, 400, 'invalid', 'This site does not collect contact details');
+
+  // Counted before the email is looked at, so malformed submissions use up the allowance too.
+  const perIp = await rateLimit(db, `lead:ip:${site.id}:${clientIp(c)}`, LEAD_IP_LIMIT_PER_HOUR, 3600);
+  if (!perIp.ok) {
+    return apiError(c, 429, 'rate_limited', 'Too many requests. Please try again later.', perIp.retryAfter);
+  }
+  const perSite = await rateLimit(db, `lead:site:${site.id}`, LEAD_SITE_LIMIT_PER_HOUR, 3600);
+  if (!perSite.ok) {
+    return apiError(c, 429, 'rate_limited', 'Too many requests. Please try again later.', perSite.retryAfter);
+  }
+
+  const email = typeof body.email === 'string' ? body.email.trim().toLowerCase() : '';
+  if (email.length > INSIGHT_LIMITS.emailMaxChars || !EMAIL_SHAPE.test(email)) {
+    return apiError(c, 400, 'invalid', 'Enter a valid email address');
+  }
+  const question = typeof body.question === 'string' ? body.question.trim().slice(0, LIMITS.messageMaxChars) : '';
+
+  // Same rule as /chat: a conversation id counts only when it belongs to this site.
+  let conversationId: string | null = null;
+  if (typeof body.conversationId === 'string' && body.conversationId !== '') {
+    const existing = await db
+      .prepare('SELECT id FROM conversations WHERE id = ?1 AND site_id = ?2')
+      .bind(body.conversationId, site.id)
+      .first<{ id: string }>();
+    conversationId = existing?.id ?? null;
+  }
+
+  await db
+    .prepare(
+      `INSERT INTO leads (id, site_id, conversation_id, email, question, created_at)
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6)`,
+    )
+    .bind(newId(), site.id, conversationId, email, question, Date.now())
+    .run();
+  return c.json({ ok: true as const });
 });

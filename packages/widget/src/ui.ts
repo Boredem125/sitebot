@@ -1,6 +1,6 @@
-import { LIMITS } from '@sitebot/shared';
-import type { ApiError, ChatRequest, SourceLink, WidgetConfig } from '@sitebot/shared';
-import { streamChat } from './api';
+import { INSIGHT_LIMITS, LIMITS } from '@sitebot/shared';
+import type { ApiError, ChatRequest, LeadRequest, SourceLink, WidgetConfig } from '@sitebot/shared';
+import { sendLead, streamChat } from './api';
 import { renderMarkdown } from './md';
 import { CSS } from './styles';
 
@@ -215,6 +215,8 @@ export function mount(config: WidgetConfig, api: string, siteKey: string): void 
   const list = el('div', 'm');
   list.setAttribute('role', 'log');
   list.setAttribute('aria-live', 'polite');
+  // Starter questions, shown under the greeting until the visitor sends something.
+  const starters = el('div', 'sq');
 
   const footer = el('div', 'f');
   const input = el('textarea');
@@ -310,6 +312,72 @@ export function mount(config: WidgetConfig, api: string, siteKey: string): void 
     }
   };
 
+  // The conversation a contact request was last sent for: one per conversation is enough.
+  const leadKey = `sitebot:${siteKey}:lead`;
+  let leadSentFor = readStored(leadKey);
+  let leadForm: HTMLFormElement | null = null;
+
+  /** Under an answer the bot could not give: offers to pass the question on to the site's team. */
+  const offerContact = (group: HTMLElement, question: string): void => {
+    if (conversationId && leadSentFor === conversationId) return;
+    // Only the latest unanswered question keeps its form.
+    leadForm?.remove();
+    const form = el('form', 'e');
+    form.setAttribute('aria-label', 'Leave your email');
+    const email = el('input');
+    email.type = 'email';
+    email.required = true;
+    email.maxLength = INSIGHT_LIMITS.emailMaxChars;
+    email.autocomplete = 'email';
+    email.placeholder = 'you@example.com';
+    email.setAttribute('aria-label', 'Your email');
+    const row = el('div', 'er');
+    // A plain <button> in a form submits it, so Enter in the field and the button do the same thing.
+    const submit = el('button', '', 'Send');
+    row.append(email, submit);
+    const problem = el('div', 'ee');
+    form.append(
+      el('div', '', 'Want a reply from the team? Leave your email.'),
+      row,
+      el('div', 'ec', 'Used only to reply to this question.'),
+      problem,
+    );
+
+    let sending = false;
+    form.addEventListener('submit', (event) => {
+      event.preventDefault();
+      const address = email.value.trim();
+      if (sending || !address) return;
+      sending = true;
+      // aria-disabled rather than disabled: a disabled button would drop the keyboard focus it holds.
+      submit.setAttribute('aria-disabled', 'true');
+      problem.textContent = '';
+      const lead: LeadRequest = { siteKey, email: address, question };
+      if (conversationId) lead.conversationId = conversationId;
+      void sendLead(api, lead).then((ok) => {
+        sending = false;
+        submit.removeAttribute('aria-disabled');
+        if (!ok) {
+          keepPinned(() => {
+            problem.textContent = 'That did not go through. Please try again.';
+          });
+          return;
+        }
+        leadSentFor = conversationId;
+        if (conversationId) writeStored(leadKey, conversationId);
+        // The form is about to go. If the keyboard was inside it, the message box is the next stop.
+        const hadFocus = form.contains(shadow.activeElement);
+        form.replaceWith(el('div', 'e', 'Thanks. We will get back to you.'));
+        leadForm = null;
+        if (hadFocus && !input.disabled) input.focus();
+      });
+    });
+
+    leadForm = form;
+    // Never focused from here: the visitor's cursor stays in the message box.
+    keepPinned(() => group.append(form));
+  };
+
   const setOpen = (open: boolean): void => {
     if (!open) stopListening();
     panel.hidden = !open;
@@ -323,8 +391,9 @@ export function mount(config: WidgetConfig, api: string, siteKey: string): void 
     }
   };
 
-  const send = async (): Promise<void> => {
-    const message = input.value.trim().slice(0, LIMITS.messageMaxChars);
+  /** Sends what is in the message box, or `preset` when a starter question was picked. */
+  const send = async (preset?: string): Promise<void> => {
+    const message = (preset ?? input.value).trim().slice(0, LIMITS.messageMaxChars);
     if (busy || !message) return;
     stopListening();
     busy = true;
@@ -332,8 +401,12 @@ export function mount(config: WidgetConfig, api: string, siteKey: string): void 
     if (mic) mic.disabled = true;
     // Hold screen-reader announcements until the reply is complete, not per token.
     list.setAttribute('aria-busy', 'true');
-    input.value = '';
-    fitInput();
+    // A starter question leaves whatever the visitor was typing where it is.
+    if (preset === undefined) {
+      input.value = '';
+      fitInput();
+    }
+    starters.remove();
 
     addMessage('u', message);
     const reply = addMessage('a', '');
@@ -389,6 +462,7 @@ export function mount(config: WidgetConfig, api: string, siteKey: string): void 
               sources.append(...links);
               keepPinned(() => reply.group.append(sources));
             }
+            if (event.offerContact === true) offerContact(reply.group, message);
             break;
           }
           case 'busy':
@@ -440,5 +514,17 @@ export function mount(config: WidgetConfig, api: string, siteKey: string): void 
   }
 
   if (config.greeting) addMessage('a', config.greeting);
+  // Already checked in loadConfig: at most three short strings.
+  for (const question of config.suggestedQuestions ?? []) {
+    const pill = el('button', '', question);
+    pill.type = 'button';
+    pill.addEventListener('click', () => void send(question));
+    starters.append(pill);
+  }
+  if (starters.childElementCount) {
+    starters.setAttribute('role', 'group');
+    starters.setAttribute('aria-label', 'Suggested questions');
+    list.append(starters);
+  }
   document.body.append(host);
 }

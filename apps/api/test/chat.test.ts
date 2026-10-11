@@ -139,11 +139,23 @@ function conversationIdOf(events: ChatEvent[]): string {
 
 async function savedMessages(siteId: string) {
   const { results } = await env.DB.prepare(
-    'SELECT conversation_id, role, content, sources, created_at FROM messages WHERE site_id = ?1 ORDER BY created_at',
+    `SELECT conversation_id, role, content, sources, created_at, answered
+     FROM messages WHERE site_id = ?1 ORDER BY created_at`,
   )
     .bind(siteId)
-    .all<{ conversation_id: string; role: string; content: string; sources: string; created_at: number }>();
+    .all<{
+      conversation_id: string;
+      role: string;
+      content: string;
+      sources: string;
+      created_at: number;
+      answered: number;
+    }>();
   return results;
+}
+
+async function turnOnLeadCapture(siteId: string): Promise<void> {
+  await env.DB.prepare('UPDATE sites SET lead_capture = 1 WHERE id = ?1').bind(siteId).run();
 }
 
 async function usageRows(siteId: string) {
@@ -228,6 +240,8 @@ describe('POST /v1/chat', () => {
       { url: 'https://example.com/pricing', title: 'Pricing' },
     ]);
     expect((messages[1]?.created_at ?? 0) - (messages[0]?.created_at ?? 0)).toBe(1);
+    // The model cited a passage, so both rows of the turn count as answered.
+    expect(messages.map((m) => m.answered)).toEqual([1, 1]);
     expect(await conversationCount(site.siteId)).toBe(1);
 
     expect(await usageRows(site.siteId)).toEqual([
@@ -244,6 +258,81 @@ describe('POST /v1/chat', () => {
     const { events } = await chat(testEnv, request(site.publicKey, 'What is the capital of France?'));
     expect(events.at(-1)).toEqual({ type: 'done', sources: [] });
     expect(JSON.parse((await savedMessages(site.siteId))[1]?.sources ?? 'null')).toEqual([]);
+  });
+
+  it('stores an uncited answer as unanswered on both rows of the turn', async () => {
+    const testEnv = makeEnv();
+    const site = await seedSite(env.DB);
+    await seedChunks(testEnv, site.siteId, [PRICING]);
+    mockGroq(["I don't know. Please contact the site directly."]);
+
+    await chat(testEnv, request(site.publicKey, 'What is the capital of France?'));
+    expect((await savedMessages(site.siteId)).map((m) => [m.role, m.answered])).toEqual([
+      ['user', 0],
+      ['assistant', 0],
+    ]);
+  });
+
+  it('stores the canned no-chunks answer as unanswered on both rows of the turn', async () => {
+    const testEnv = makeEnv();
+    const site = await seedSite(env.DB);
+
+    await chat(testEnv, request(site.publicKey, 'What is your refund policy?'));
+    expect((await savedMessages(site.siteId)).map((m) => [m.role, m.answered])).toEqual([
+      ['user', 0],
+      ['assistant', 0],
+    ]);
+  });
+
+  it('flags each turn on its own: an answered follow-up does not clear an unanswered question', async () => {
+    const testEnv = makeEnv();
+    const site = await seedSite(env.DB);
+    await seedChunks(testEnv, site.siteId, [PRICING]);
+    const groq = mockGroq(["I don't know."]);
+
+    const first = await chat(testEnv, request(site.publicKey, 'Do you ship to Mars?'));
+    groq.mockImplementation(async () => new Response(groqSse(['Plans start at $10. [1]']), { status: 200 }));
+    await chat(testEnv, request(site.publicKey, 'How much?', conversationIdOf(first.events)));
+
+    expect((await savedMessages(site.siteId)).map((m) => [m.content, m.answered])).toEqual([
+      ['Do you ship to Mars?', 0],
+      ["I don't know.", 0],
+      ['How much?', 1],
+      ['Plans start at $10.', 1],
+    ]);
+  });
+
+  it('offers contact on done only when the turn is unanswered and lead capture is on', async () => {
+    const testEnv = makeEnv();
+    const site = await seedSite(env.DB);
+    await seedChunks(testEnv, site.siteId, [PRICING]);
+    const groq = mockGroq(["I don't know."]);
+
+    // Lead capture off: an unanswered turn carries no offer.
+    const off = await chat(testEnv, request(site.publicKey, 'Do you ship to Mars?'));
+    expect(off.events.at(-1)).toEqual({ type: 'done', sources: [] });
+
+    await turnOnLeadCapture(site.siteId);
+
+    const uncited = await chat(testEnv, request(site.publicKey, 'Do you ship to Mars?'));
+    expect(uncited.events.at(-1)).toEqual({ type: 'done', sources: [], offerContact: true });
+
+    groq.mockImplementation(async () => new Response(groqSse(['Plans start at $10. [1]']), { status: 200 }));
+    const cited = await chat(testEnv, request(site.publicKey, 'How much?'));
+    const done = cited.events.at(-1);
+    expect(done).toEqual({ type: 'done', sources: [{ url: 'https://example.com/pricing', title: 'Pricing' }] });
+    expect(done).not.toHaveProperty('offerContact');
+  });
+
+  it('offers contact after the canned no-chunks reply when lead capture is on', async () => {
+    const testEnv = makeEnv();
+    const site = await seedSite(env.DB);
+    await turnOnLeadCapture(site.siteId);
+    const groq = mockGroq();
+
+    const { events } = await chat(testEnv, request(site.publicKey, 'What is your refund policy?'));
+    expect(groq).not.toHaveBeenCalled();
+    expect(events.at(-1)).toEqual({ type: 'done', sources: [], offerContact: true });
   });
 
   it('uses the site model when one is set', async () => {
@@ -743,6 +832,37 @@ describe('GET /v1/widget/config', () => {
       color: '#ff0000',
       position: 'left',
     });
+  });
+
+  it('includes leadCapture and suggestedQuestions only when the site has them', async () => {
+    const testEnv = makeEnv();
+    const site = await seedSite(env.DB);
+    const config = async (): Promise<WidgetConfig> => {
+      const ctx = createExecutionContext();
+      const res = await publicApi.request(`/widget/config?site=${site.publicKey}`, {}, testEnv.env, ctx);
+      await waitOnExecutionContext(ctx);
+      return res.json<WidgetConfig>();
+    };
+
+    const plain = await config();
+    expect(plain).not.toHaveProperty('leadCapture');
+    expect(plain).not.toHaveProperty('suggestedQuestions');
+
+    await env.DB.prepare('UPDATE sites SET lead_capture = 1, suggested_questions = ?1 WHERE id = ?2')
+      .bind(JSON.stringify(['What does it cost?', '', 7, 'Do you ship abroad?', 'Is there a trial?', 'A fourth?']), site.siteId)
+      .run();
+    const full = await config();
+    expect(full.leadCapture).toBe(true);
+    // Blank and non-string entries are dropped, and no more than three are sent.
+    expect(full.suggestedQuestions).toEqual(['What does it cost?', 'Do you ship abroad?', 'Is there a trial?']);
+
+    // A value that is not a JSON array is treated as no questions at all.
+    await env.DB.prepare('UPDATE sites SET lead_capture = 0, suggested_questions = ?1 WHERE id = ?2')
+      .bind('{"not":"a list"}', site.siteId)
+      .run();
+    const broken = await config();
+    expect(broken).not.toHaveProperty('leadCapture');
+    expect(broken).not.toHaveProperty('suggestedQuestions');
   });
 
   it('returns 404 for an unknown or missing key', async () => {

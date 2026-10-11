@@ -2,7 +2,7 @@
 // w wrapper (l/r side, o open), b launcher (lg = shows the site logo), p panel, h header,
 // n name, x close, m message list, g message group (u user / a assistant), t text bubble
 // (md = rendered Markdown), li list row (in = nested), s sources, d typing dots, f footer, v voice input (on = listening), k send
-// button, q note.
+// button, q note, sq starter questions, e contact form (er field row, ec small print, ee error line).
 //
 // Theme variables set on .w by ui.ts: --c accent, --t text on accent, --bg panel
 // background, --fg text on the background, --lk link colour, --ff font family.
@@ -16,7 +16,7 @@ export const CSS = `
 *,*::before,*::after{box-sizing:border-box}
 [hidden]{display:none!important}
 .w{--c:#2563eb;--t:#fff;--bg:#fff;--fg:#111827;--lk:#1d4ed8;font:14px/1.45 var(--ff,system-ui),system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;color:var(--fg);-webkit-text-size-adjust:100%}
-button,textarea{font:inherit;color:inherit;margin:0}
+button,textarea,input{font:inherit;color:inherit;margin:0}
 button{cursor:pointer;border:0;padding:0;background:none}
 :focus-visible{outline:2px solid var(--fg);outline-offset:2px;box-shadow:0 0 0 2px var(--bg)}
 .b{position:fixed;bottom:20px;z-index:2147483000;width:56px;height:56px;border-radius:50%;background:var(--c);color:var(--t);display:flex;align-items:center;justify-content:center;box-shadow:0 4px 14px rgba(0,0,0,.25),inset 0 0 0 1px rgba(0,0,0,.08);transition:transform .15s}
@@ -58,6 +58,17 @@ code{padding:1px 5px}
 pre{margin:0;padding:9px 11px;border-radius:8px;overflow-x:auto;white-space:pre;border:1px solid color-mix(in srgb,var(--fg) 12%,transparent)}
 .s{display:flex;flex-direction:column;gap:3px;padding:0 4px;font-size:12px}
 .s a{color:var(--lk);text-decoration:underline;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;border-radius:3px}
+.sq{display:flex;flex-wrap:wrap;gap:6px}
+.sq button{max-width:100%;padding:6px 12px;border:1px solid color-mix(in srgb,var(--fg) 32%,transparent);border-radius:16px;background:var(--bg);color:var(--fg);font-size:13px;text-align:left;overflow-wrap:anywhere}
+.sq button:hover{border-color:var(--c);background:color-mix(in srgb,var(--c) 12%,var(--bg))}
+.e{display:flex;flex-direction:column;gap:6px;margin:0;padding:10px 12px;border:1px solid color-mix(in srgb,var(--fg) 22%,transparent);border-radius:12px;background:var(--bg);font-size:13px}
+.er{display:flex;gap:6px}
+input{flex:1;min-width:0;height:36px;padding:0 10px;border:1px solid color-mix(in srgb,var(--fg) 38%,transparent);border-radius:8px;background:var(--bg);color:var(--fg)}
+.er button{flex:none;height:36px;padding:0 14px;border-radius:8px;background:var(--c);color:var(--t);font-weight:600;box-shadow:inset 0 0 0 1px rgba(0,0,0,.08)}
+.er [aria-disabled]{opacity:.5;cursor:default}
+.ec{font-size:11px;color:color-mix(in srgb,var(--fg) 60%,var(--bg))}
+.ee{font-weight:600}
+.ee:empty{display:none}
 .d{display:inline-flex;gap:4px;padding:6px 0}
 .d i{width:6px;height:6px;border-radius:50%;background:color-mix(in srgb,var(--fg) 55%,var(--bg));animation:bl 1.2s infinite both}
 .d i:nth-child(2){animation-delay:.2s}
@@ -65,7 +76,7 @@ pre{margin:0;padding:9px 11px;border-radius:8px;overflow-x:auto;white-space:pre;
 @keyframes bl{0%,80%,100%{opacity:.25}40%{opacity:1}}
 .f{flex:none;display:flex;align-items:flex-end;gap:8px;padding:10px 12px 6px;border-top:1px solid color-mix(in srgb,var(--fg) 13%,transparent)}
 textarea{flex:1;min-width:0;height:40px;max-height:112px;resize:none;padding:9px 12px;border:1px solid color-mix(in srgb,var(--fg) 38%,transparent);border-radius:10px;background:var(--bg);color:var(--fg);line-height:20px}
-textarea::placeholder{color:color-mix(in srgb,var(--fg) 55%,var(--bg))}
+textarea::placeholder,input::placeholder{color:color-mix(in srgb,var(--fg) 55%,var(--bg))}
 textarea:disabled{background:color-mix(in srgb,var(--fg) 6%,var(--bg))}
 .k{flex:none;width:40px;height:40px;border-radius:10px;background:var(--c);color:var(--t);display:flex;align-items:center;justify-content:center;box-shadow:inset 0 0 0 1px rgba(0,0,0,.08)}
 .k:disabled,.v:disabled{opacity:.5;cursor:default}
@@ -77,7 +88,7 @@ textarea:disabled{background:color-mix(in srgb,var(--fg) 6%,var(--bg))}
 @media (max-width:479px){
 .w .p{inset:0;width:100%;height:100%;max-width:none;max-height:none;border:0;border-radius:0}
 .w.o .b{display:none}
-textarea{font-size:16px}
+textarea,input{font-size:16px}
 }
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 `;

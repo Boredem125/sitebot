@@ -14,6 +14,8 @@ export default defineConfig(async () => {
           compatibilityFlags: ['nodejs_compat'],
           d1Databases: ['DB'],
           r2Buckets: ['UPLOADS'],
+          // No test may reach the real network: an unmocked fetch gets this instead of a live call.
+          outboundService: () => new Response('outbound network is blocked in tests', { status: 599 }),
           bindings: {
             TEST_MIGRATIONS: migrations,
             GROQ_API_KEY: 'test-groq-key',

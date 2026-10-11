@@ -1,6 +1,7 @@
 import { LIMITS } from '@sitebot/shared';
 import { parseJson } from '../db';
 import { CRAWLER_USER_AGENT, type Env, type IngestJob } from '../env';
+import { refreshSuggestions } from '../suggest';
 import { applyBrand, detectBrand } from './brand';
 import { decodeEntities, extractHtml } from './extract';
 import { batches, deleteChunks, indexDocument, loadSource, setSourceStatus } from './index-doc';
@@ -496,4 +497,5 @@ async function finishIfIdle(env: Env, siteId: string, sourceId: string): Promise
   const staleIds = stale.map((r) => r.id);
   await deleteChunks(env, siteId, staleIds);
   await setSourceStatus(env, siteId, sourceId, 'ready', null, counts.done);
+  await refreshSuggestions(env, siteId);
 }

@@ -6,6 +6,9 @@ import { NO_PAGES_ERROR, crawlPage, startCrawl } from '../src/ingest/crawl';
 import { newId } from '../src/util';
 import { makeEnv, seedSite, type TestEnv } from './helpers';
 
+// Starter-question generation has its own tests; here it would add a Groq call to every ingest.
+vi.mock('../src/suggest', () => ({ refreshSuggestions: async () => {} }));
+
 type Routes = Record<string, () => Response>;
 
 interface FetchCall {

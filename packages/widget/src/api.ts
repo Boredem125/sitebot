@@ -1,4 +1,5 @@
-import type { ApiError, ChatEvent, ChatRequest, WidgetConfig } from '@sitebot/shared';
+import { INSIGHT_LIMITS } from '@sitebot/shared';
+import type { ApiError, ChatEvent, ChatRequest, LeadRequest, WidgetConfig } from '@sitebot/shared';
 import { createSseParser } from './sse';
 
 const DEFAULT_COLOR = '#2563eb';
@@ -16,9 +17,8 @@ export async function loadConfig(api: string, siteKey: string): Promise<WidgetCo
     const raw: unknown = await res.json();
     if (!raw || typeof raw !== 'object') return null;
     // Site config is owner-supplied, so every field is checked rather than trusted.
-    const { name, greeting, color, position, background, textColor, font, logoUrl } = raw as Partial<
-      Record<keyof WidgetConfig, unknown>
-    >;
+    const { name, greeting, color, position, background, textColor, font, logoUrl, suggestedQuestions, leadCapture } =
+      raw as Partial<Record<keyof WidgetConfig, unknown>>;
     const config: WidgetConfig = {
       name: (typeof name === 'string' && name.trim()) || 'Chat',
       greeting: typeof greeting === 'string' ? greeting.trim() : '',
@@ -39,6 +39,16 @@ export async function loadConfig(api: string, siteKey: string): Promise<WidgetCo
         // Not a URL: no logo.
       }
     }
+    // Starter questions may be model-written: strings only, short, and never more than three.
+    if (Array.isArray(suggestedQuestions)) {
+      const questions = suggestedQuestions
+        .flatMap((q: unknown) =>
+          typeof q === 'string' && q.trim() ? [q.trim().slice(0, INSIGHT_LIMITS.suggestedQuestionMaxChars)] : [],
+        )
+        .slice(0, INSIGHT_LIMITS.suggestedQuestions);
+      if (questions.length) config.suggestedQuestions = questions;
+    }
+    if (leadCapture === true) config.leadCapture = true;
     return config;
   } catch {
     return null;
@@ -94,4 +104,19 @@ export async function streamChat(
     parser.end();
   }
   return null;
+}
+
+/** Sends the visitor's contact details. False on any failure; the form then offers a retry. */
+export async function sendLead(api: string, lead: LeadRequest): Promise<boolean> {
+  try {
+    const res = await fetch(`${api}/v1/lead`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(lead),
+      credentials: 'omit',
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
 }

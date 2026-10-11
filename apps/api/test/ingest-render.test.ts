@@ -6,6 +6,9 @@ import { renderPacing, renderPage } from '../src/ingest/render';
 import { newId } from '../src/util';
 import { makeEnv, seedSite } from './helpers';
 
+// Starter-question generation has its own tests; here it would add a Groq call to every ingest.
+vi.mock('../src/suggest', () => ({ refreshSuggestions: async () => {} }));
+
 const SHELL =
   '<html><head><title>Acme</title></head><body><div id="root"></div><script src="/app.js"></script></body></html>';
 const RENDERED =

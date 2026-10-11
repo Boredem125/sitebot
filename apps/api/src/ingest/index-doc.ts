@@ -76,22 +76,30 @@ export async function indexDocument(
     `INSERT INTO chunks (id, site_id, source_id, url, title, content, doc_hash, position, created_at)
      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)`,
   );
-  for (const group of batches(rows).reverse()) {
-    await env.DB.batch(
-      group.map((row) =>
-        insert.bind(
-          row.id,
-          doc.siteId,
-          doc.sourceId,
-          doc.url,
-          doc.title,
-          row.content,
-          docHash,
-          row.position,
-          now,
+  try {
+    for (const group of batches(rows).reverse()) {
+      await env.DB.batch(
+        group.map((row) =>
+          insert.bind(
+            row.id,
+            doc.siteId,
+            doc.sourceId,
+            doc.url,
+            doc.title,
+            row.content,
+            docHash,
+            row.position,
+            now,
+          ),
         ),
-      ),
-    );
+      );
+    }
+  } catch (err) {
+    // Typically the source was deleted while we were embedding, so the insert fails on its
+    // foreign key. The vectors just written would have no row naming them: take them back out,
+    // along with any rows that did get in, then let the job fail.
+    await deleteChunks(env, doc.siteId, rows.map((row) => row.id)).catch(() => {});
+    throw err;
   }
   return 'indexed';
 }

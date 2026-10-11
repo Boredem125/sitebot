@@ -5,6 +5,9 @@ import { processQa, processUpload } from '../src/ingest/upload';
 import { newId } from '../src/util';
 import { makeEnv, seedSite } from './helpers';
 
+// Starter-question generation has its own tests; here it would add a Groq call to every ingest.
+vi.mock('../src/suggest', () => ({ refreshSuggestions: async () => {} }));
+
 interface Ids {
   siteId: string;
   sourceId: string;

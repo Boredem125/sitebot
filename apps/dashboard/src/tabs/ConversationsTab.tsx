@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import type { ConversationSummary, Message, SourceLink } from '@sitebot/shared';
 import { getMessages, listConversations } from '../api';
+import { Markdown } from '../components/Markdown';
 import { EmptyState, ErrorState, Spinner } from '../components/ui';
 import { formatDateTime, formatNumber, formatRelative, isoDate, safeHttpUrl } from '../lib/format';
 import { useLoad } from '../lib/useLoad';
@@ -109,8 +110,15 @@ function MessageBubble({ message }: { message: Message }) {
         {' · '}
         <time dateTime={isoDate(message.createdAt)}>{formatDateTime(message.createdAt)}</time>
       </span>
-      {/* Plain text on purpose: visitor and model output is never interpreted as HTML. */}
-      <p className="msg-bubble">{message.content}</p>
+      {isBot ? (
+        // Formatted the way the widget shows it. Markdown builds elements, never HTML.
+        <div className="msg-bubble md">
+          <Markdown source={message.content} />
+        </div>
+      ) : (
+        // Plain text on purpose: what a visitor typed is shown exactly as typed.
+        <p className="msg-bubble">{message.content}</p>
+      )}
       {isBot && message.sources.length > 0 && <Sources sources={message.sources} />}
     </li>
   );

@@ -101,10 +101,12 @@ function parseRetryAfter(header: string | null): number | null {
 type KeyEnv = Pick<Env, 'GROQ_API_KEY' | 'GROQ_API_KEYS' | 'FALLBACK_MODEL'>;
 
 /** GROQ_API_KEY first, then GROQ_API_KEYS in order, without blanks or repeats. */
-function groqKeys(env: KeyEnv): string[] {
+export function groqKeys(env: KeyEnv): string[] {
   const keys: string[] = [];
-  for (const entry of [env.GROQ_API_KEY ?? '', ...(env.GROQ_API_KEYS ?? '').split(',')]) {
-    const key = entry.trim();
+  // Both secrets may hold a list: pasting every key into GROQ_API_KEY is an easy thing to do,
+  // and sending "key1,key2" as one bearer token would fail every request.
+  for (const entry of `${env.GROQ_API_KEY ?? ''},${env.GROQ_API_KEYS ?? ''}`.split(/[,\s]+/)) {
+    const key = entry.replace(/^["']+|["']+$/g, '');
     if (key !== '' && !keys.includes(key)) keys.push(key);
   }
   return keys;

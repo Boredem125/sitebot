@@ -1,1 +1,147 @@
-/* Styles for the Questions tab (unanswered questions and leads). */
+/* Styles for the Questions tab (unanswered questions and leads), the suggested
+   questions and lead capture controls on the Appearance tab, and formatted answers. */
+
+/* ---------- questions and contact requests ---------- */
+
+.q-list {
+  margin-top: 16px;
+}
+
+.q-item {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px 0;
+  border-top: 1px solid var(--border);
+}
+
+.q-item:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.q-item:last-child {
+  padding-bottom: 0;
+}
+
+.q-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px 16px;
+}
+
+.q-main {
+  display: flex;
+  flex: 1 1 260px;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.q-text {
+  font-weight: 550;
+  overflow-wrap: anywhere;
+}
+
+/* The visitor's own words under their address. */
+.q-quote {
+  padding-left: 10px;
+  border-left: 3px solid var(--border-strong);
+  color: var(--muted);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.q-action,
+.q-when {
+  flex: none;
+}
+
+.q-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* ---------- appearance: lead capture and suggested questions ---------- */
+
+.check {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  cursor: pointer;
+}
+
+.check input {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  margin: 2px 0 0;
+  accent-color: var(--accent);
+}
+
+.pv-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+/* Sits on the previewed panel, so it takes the panel's own text colour. */
+.pv-pill {
+  max-width: 100%;
+  padding: 4px 10px;
+  border: 1px solid color-mix(in srgb, currentColor 32%, transparent);
+  border-radius: 14px;
+  font-size: 0.78rem;
+  overflow-wrap: anywhere;
+}
+
+/* ---------- formatted answers (components/Markdown.tsx) ---------- */
+
+.msg-bubble.md {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  white-space: normal;
+}
+
+.md-li {
+  display: flex;
+  gap: 8px;
+}
+
+.md-in {
+  margin-left: 22px;
+}
+
+.md-li > span:first-child {
+  flex: none;
+  min-width: 14px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.md-li > span:last-child {
+  min-width: 0;
+}
+
+.md code,
+.md pre {
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--text) 10%, transparent);
+}
+
+.md code {
+  padding: 1px 5px;
+}
+
+.md pre {
+  padding: 9px 11px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  margin: 0;
+  overflow-x: auto;
+  white-space: pre;
+}

@@ -13,6 +13,9 @@ import { handleQueue, handleScheduled } from '../src/queue';
 import { newId } from '../src/util';
 import { makeEnv, seedSite, type TestEnv } from './helpers';
 
+// Starter-question generation has its own tests; here it would add a Groq call to every ingest.
+vi.mock('../src/suggest', () => ({ refreshSuggestions: async () => {} }));
+
 async function seedSource(
   siteId: string,
   fields: { kind: 'crawl' | 'upload' | 'qa'; label: string; content?: string; status?: string; error?: string },
